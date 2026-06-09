@@ -167,6 +167,32 @@
   display: none;
 }
 
+.mobile-pdf-exporter-page .mobile-pdf-exporter-skip {
+  display: none !important;
+}
+
+.mobile-pdf-exporter-page .mobile-pdf-exporter-excalidraw-preview {
+  display: block;
+  width: 100%;
+  margin-block: 0.42em;
+  overflow: hidden;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.mobile-pdf-exporter-page .mobile-pdf-exporter-excalidraw-svg {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  max-height: calc(var(--mobile-pdf-exporter-page-height, 850px) - (var(--mobile-pdf-exporter-padding, 26px) * 2) - 24px);
+  height: auto;
+  object-fit: contain;
+}
+
+.mobile-pdf-exporter-page .mobile-pdf-exporter-excalidraw-fallback {
+  color: var(--text-muted);
+}
+
 @media print {
   @page {
     size: 104mm 225mm;

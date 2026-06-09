@@ -107,6 +107,37 @@ interface KeepBlockFragment {
   priority: number;
 }
 
+interface ExcalidrawAutomateRuntime {
+  getAPI?: () => ExcalidrawAutomateRuntime;
+  reset?: () => void;
+  destroy?: () => void;
+  createSVG?: (
+    templatePath?: string,
+    embedFont?: boolean,
+    exportSettings?: unknown,
+    loader?: unknown,
+    theme?: string,
+    padding?: number,
+    convertMarkdownLinksToObsidianURLs?: boolean,
+    includeInternalLinks?: boolean
+  ) => Promise<SVGSVGElement>;
+  createPNG?: (
+    templatePath?: string,
+    scale?: number,
+    exportSettings?: unknown,
+    loader?: unknown,
+    theme?: string,
+    padding?: number
+  ) => Promise<Blob>;
+  getExportSettings?: (withBackground: boolean, withTheme: boolean, isMask?: boolean) => unknown;
+  getEmbeddedFilesLoader?: (isDark?: boolean) => unknown;
+}
+
+interface ExcalidrawAutomateLease {
+  api: ExcalidrawAutomateRuntime;
+  destroyAfterUse: boolean;
+}
+
 const DEFAULT_SETTINGS: MobilePdfExporterSettings = {
   outputFolder: "PDF Exports",
   marginMm: 7,
@@ -117,10 +148,18 @@ const DEFAULT_SETTINGS: MobilePdfExporterSettings = {
 
 const MOBILE_PAGE_MM = { width: 104, height: 225 };
 const PDF_SUBJECT = "Selectable preview PDF exported from Obsidian";
+const EXCALIDRAW_IMAGE_PDF_SUBJECT = "Image PDF exported from Obsidian Excalidraw";
 const MAX_SVG_FRAGMENTS_PER_PAGE = 24;
-const SVG_IMAGE_LOAD_TIMEOUT_MS = 220;
+const SVG_IMAGE_LOAD_TIMEOUT_MS = 1800;
 const IMAGE_WAIT_TIMEOUT_MS = 2500;
 const PREVIEW_RENDER_TIMEOUT_MS = 12000;
+const EXCALIDRAW_IMAGE_RENDER_TIMEOUT_MS = 60000;
+const EXCALIDRAW_IMAGE_LOAD_TIMEOUT_MS = 30000;
+const EXCALIDRAW_MIN_EXPORT_SCALE = 0.5;
+const EXCALIDRAW_PREFERRED_MAX_PNG_BYTES = 24 * 1024 * 1024;
+const EXCALIDRAW_MAX_SLICE_WIDTH_PX = 4096;
+const EXCALIDRAW_MAX_SLICE_HEIGHT_PX = 8192;
+const EXCALIDRAW_MAX_SLICE_PIXELS = 16_000_000;
 const FRAME_WAIT_TIMEOUT_MS = 120;
 const PAGE_BREAK_PADDING_PX = 8;
 const PAGE_BREAK_MIN_ADVANCE_PX = 72;
@@ -199,8 +238,12 @@ export default class MobilePdfExporterPlugin extends Plugin {
     try {
       cleanupRenderRoots();
       const markdown = await this.app.vault.cachedRead(file);
-      rendered = await this.renderMarkdownPreview(file, markdown);
-      const pdfBlob = await this.renderPreviewToSelectablePdf(file, rendered.pageEl);
+      const pdfBlob = isExcalidrawMarkdownFile(file, markdown)
+        ? await this.renderExcalidrawToImagePdf(file)
+        : await (async () => {
+            rendered = await this.renderMarkdownPreview(file, markdown);
+            return this.renderPreviewToSelectablePdf(file, rendered.pageEl);
+          })();
 
       await this.ensureFolderExists(this.settings.outputFolder);
       const outputPath = await this.getAvailableOutputPath(file, this.settings.outputFolder);
@@ -227,6 +270,134 @@ export default class MobilePdfExporterPlugin extends Plugin {
     }
   }
 
+  private async renderExcalidrawToImagePdf(file: TFile): Promise<Blob> {
+    const lease = this.getExcalidrawAutomateLease();
+    if (!lease) {
+      throw new Error("没有找到 Excalidraw 导出接口，请确认 Excalidraw 插件已启用。");
+    }
+
+    const errors: string[] = [];
+
+    try {
+      const exportSettings = lease.api.getExportSettings?.(true, true, false);
+      const loader = lease.api.getEmbeddedFilesLoader?.(false);
+      const preferredScale = Math.min(3, Math.max(2, window.devicePixelRatio || 2));
+      const scales = getExcalidrawExportScaleCandidates(preferredScale);
+
+      // Prefer SVG so Excalidraw's own createPNG path does not show "PNG too large" notices.
+      if (lease.api.createSVG) {
+        try {
+          lease.api.reset?.();
+          const svg = await waitForPromiseOrTimeout(
+            lease.api.createSVG(file.path, false, exportSettings, loader, "light", 12, true, true),
+            EXCALIDRAW_IMAGE_RENDER_TIMEOUT_MS
+          );
+          if (svg instanceof SVGSVGElement) {
+            for (const scale of scales) {
+              const pngBytes = await svgElementToPngBytes(svg, scale, EXCALIDRAW_IMAGE_LOAD_TIMEOUT_MS);
+              if (!pngBytes || pngBytes.byteLength <= 0) continue;
+              if (pngBytes.byteLength > EXCALIDRAW_PREFERRED_MAX_PNG_BYTES && scale > EXCALIDRAW_MIN_EXPORT_SCALE) continue;
+
+              const pdfBlob = await this.tryBuildExcalidrawImagePdf(file, pngBytes, `SVG ${scale}x`);
+              if (pdfBlob) return pdfBlob;
+            }
+          }
+        } catch (error) {
+          errors.push(formatErrorMessage(error));
+          console.warn("Mobile PDF Exporter Excalidraw SVG fallback failed", error);
+        }
+      }
+
+      if (lease.api.createPNG) {
+        for (const scale of getExcalidrawPngFallbackScaleCandidates(Boolean(lease.api.createSVG))) {
+          try {
+            lease.api.reset?.();
+            const pngBlob = await waitForPromiseOrTimeout(
+              lease.api.createPNG(file.path, scale, exportSettings, loader, "light", 12),
+              EXCALIDRAW_IMAGE_RENDER_TIMEOUT_MS
+            );
+            if (!pngBlob || pngBlob.size <= 0) {
+              errors.push(`PNG ${scale}x 没有返回图片。`);
+              continue;
+            }
+
+            const pdfBlob = await this.tryBuildExcalidrawImagePdf(file, await blobToUint8Array(pngBlob), `PNG ${scale}x`);
+            if (pdfBlob) return pdfBlob;
+          } catch (error) {
+            errors.push(formatErrorMessage(error));
+            console.warn(`Mobile PDF Exporter Excalidraw PNG ${scale}x failed`, error);
+          }
+        }
+      }
+
+      const suffix = errors.length > 0 ? `最后错误：${errors[errors.length - 1]}` : "未能取得可用图片。";
+      throw new Error(`Excalidraw 图片过大或导出失败，已尝试降低分辨率和分页切片。${suffix}`);
+    } finally {
+      if (lease.destroyAfterUse) lease.api.destroy?.();
+    }
+  }
+
+  private async tryBuildExcalidrawImagePdf(file: TFile, imageBytes: Uint8Array, label: string): Promise<Blob | null> {
+    try {
+      return await this.imageBytesToSlicedExcalidrawPdf(file, imageBytes);
+    } catch (error) {
+      console.warn(`Mobile PDF Exporter Excalidraw PDF build failed for ${label}`, error);
+      return null;
+    }
+  }
+
+  private async imageBytesToSlicedExcalidrawPdf(file: TFile, imageBytes: Uint8Array): Promise<Blob> {
+    const sourceImage = await imageBytesToHtmlImage(imageBytes);
+    const sourceWidthPx = Math.max(1, sourceImage.naturalWidth || sourceImage.width);
+    const sourceHeightPx = Math.max(1, sourceImage.naturalHeight || sourceImage.height);
+    const pdfDoc = await PDFDocument.create();
+    pdfDoc.setTitle(file.basename);
+    pdfDoc.setSubject(EXCALIDRAW_IMAGE_PDF_SUBJECT);
+
+    const pageWidthPt = mmToPt(MOBILE_PAGE_MM.width);
+    const fixedPageHeightPt = mmToPt(MOBILE_PAGE_MM.height);
+    const pageMarginPt = mmToPt(2);
+    const usableWidthPt = Math.max(24, pageWidthPt - pageMarginPt * 2);
+    const usableHeightPt = Math.max(24, fixedPageHeightPt - pageMarginPt * 2);
+    const pxToPt = usableWidthPt / sourceWidthPx;
+    const fullPageSourceHeightPx = Math.max(1, Math.floor(usableHeightPt / pxToPt));
+    const singlePage = sourceHeightPx <= fullPageSourceHeightPx;
+    let sourceY = 0;
+
+    while (sourceY < sourceHeightPx) {
+      const sourceSliceHeightPx = Math.min(fullPageSourceHeightPx, sourceHeightPx - sourceY);
+      const sliceBytes = await imageSliceToPngBytes(sourceImage, sourceY, sourceSliceHeightPx);
+      const sliceImage = await pdfDoc.embedPng(sliceBytes);
+      const drawHeightPt = Math.min(usableHeightPt, sourceSliceHeightPx * pxToPt);
+      const pageHeightPt = singlePage
+        ? Math.max(mmToPt(20), drawHeightPt + pageMarginPt * 2)
+        : fixedPageHeightPt;
+      const page = pdfDoc.addPage([pageWidthPt, pageHeightPt]);
+
+      page.drawRectangle({
+        x: 0,
+        y: 0,
+        width: pageWidthPt,
+        height: pageHeightPt,
+        color: rgb(1, 1, 1)
+      });
+      page.drawImage(sliceImage, {
+        x: (pageWidthPt - usableWidthPt) / 2,
+        y: pageHeightPt - pageMarginPt - drawHeightPt,
+        width: usableWidthPt,
+        height: drawHeightPt
+      });
+
+      sourceY += sourceSliceHeightPx;
+      await nextAnimationFrame();
+    }
+
+    const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
+    const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
+    new Uint8Array(pdfBuffer).set(pdfBytes);
+    return new Blob([pdfBuffer], { type: "application/pdf" });
+  }
+
   private getActiveMarkdownFile(): TFile | null {
     const file = this.app.workspace.getActiveFile();
     if (!file || file.extension.toLowerCase() !== "md") return null;
@@ -236,6 +407,10 @@ export default class MobilePdfExporterPlugin extends Plugin {
   private async renderMarkdownPreview(file: TFile, markdown: string): Promise<RenderedPreview> {
     const renderWidthPx = mmToPx(MOBILE_PAGE_MM.width);
     const paddingPx = mmToPx(this.settings.marginMm);
+    const isExcalidrawFile = isExcalidrawMarkdownFile(file, markdown);
+    const markdownToRender = isExcalidrawFile
+      ? sanitizeExcalidrawMarkdownForPreview(markdown)
+      : markdown;
 
     cleanupRenderRoots();
     const renderComponent = new Component();
@@ -265,9 +440,22 @@ export default class MobilePdfExporterPlugin extends Plugin {
       });
 
       const rendered = await waitForPromiseOrTimeout(
-        MarkdownRenderer.render(this.app, markdown, markdownEl, file.path, renderComponent),
+        MarkdownRenderer.render(this.app, markdownToRender, markdownEl, file.path, renderComponent),
         PREVIEW_RENDER_TIMEOUT_MS
       );
+
+      hideExcalidrawSourceBlocks(markdownEl);
+
+      if (isExcalidrawFile) {
+        const renderedSvg = await this.renderExcalidrawFilePreview(file, markdownEl);
+        hideExcalidrawSourceBlocks(markdownEl);
+        if (!renderedSvg && !hasExportableContent(markdownEl)) {
+          appendElement(markdownEl, "p", {
+            cls: "mobile-pdf-exporter-excalidraw-fallback",
+            text: "Excalidraw 预览暂不可用，已跳过源码数据。"
+          });
+        }
+      }
 
       if (!rendered) {
         await waitForRenderedContent(markdownEl, 1000);
@@ -282,7 +470,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
       await nextAnimationFrame(FRAME_WAIT_TIMEOUT_MS);
 
       const rect = pageEl.getBoundingClientRect();
-      if (rect.width < 1 || rect.height < 1 || pageEl.scrollHeight < 1 || !hasRenderedContent(markdownEl)) {
+      if (rect.width < 1 || rect.height < 1 || pageEl.scrollHeight < 1 || !hasExportableContent(markdownEl)) {
         throw new Error("预览层没有可导出的尺寸。");
       }
 
@@ -292,6 +480,69 @@ export default class MobilePdfExporterPlugin extends Plugin {
       rootEl.remove();
       throw error;
     }
+  }
+
+  private async renderExcalidrawFilePreview(file: TFile, markdownEl: HTMLElement): Promise<boolean> {
+    const lease = this.getExcalidrawAutomateLease();
+    if (!lease) return false;
+
+    try {
+      lease.api.reset?.();
+      const exportSettings = lease.api.getExportSettings?.(true, true, false);
+      const loader = lease.api.getEmbeddedFilesLoader?.(false);
+      const svg = await waitForPromiseOrTimeout(
+        lease.api.createSVG?.(file.path, false, exportSettings, loader, "light", 12, true, true) ??
+          Promise.resolve(null),
+        PREVIEW_RENDER_TIMEOUT_MS
+      );
+      if (!(svg instanceof SVGSVGElement)) return false;
+
+      svg.classList.add("mobile-pdf-exporter-excalidraw-svg");
+      svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+      svg.style.display = "block";
+      svg.style.width = "100%";
+      svg.style.maxWidth = "100%";
+      svg.style.height = "auto";
+      const viewBox = svg.viewBox.baseVal;
+      if (viewBox.width > 0 && viewBox.height > 0) {
+        svg.style.aspectRatio = `${viewBox.width} / ${viewBox.height}`;
+      }
+
+      const previewEl = appendElement(markdownEl, "div", {
+        cls: "mobile-pdf-exporter-excalidraw-preview"
+      });
+      previewEl.appendChild(svg);
+      return true;
+    } catch (error) {
+      console.warn("Mobile PDF Exporter Excalidraw preview failed", error);
+      return false;
+    } finally {
+      if (lease.destroyAfterUse) lease.api.destroy?.();
+    }
+  }
+
+  private getExcalidrawAutomateLease(): ExcalidrawAutomateLease | null {
+    const globalApi = (window as unknown as { ExcalidrawAutomate?: ExcalidrawAutomateRuntime }).ExcalidrawAutomate;
+    if (globalApi?.getAPI) {
+      const api = globalApi.getAPI();
+      if (api?.createPNG || api?.createSVG) return { api, destroyAfterUse: true };
+    }
+
+    const plugins = (this.app as unknown as {
+      plugins?: { plugins?: Record<string, unknown> };
+    }).plugins?.plugins;
+    const excalidrawPlugin = plugins?.["obsidian-excalidraw-plugin"] as
+      | { ea?: ExcalidrawAutomateRuntime }
+      | undefined;
+    const pluginApi = excalidrawPlugin?.ea;
+
+    if (pluginApi?.getAPI) {
+      const api = pluginApi.getAPI();
+      if (api?.createPNG || api?.createSVG) return { api, destroyAfterUse: true };
+    }
+
+    if (pluginApi?.createPNG || pluginApi?.createSVG) return { api: pluginApi, destroyAfterUse: false };
+    return null;
   }
 
   private async renderPreviewToSelectablePdf(file: TFile, pageEl: HTMLElement): Promise<Blob> {
@@ -581,6 +832,86 @@ function mmToPx(mm: number): number {
 
 function mmToPt(mm: number): number {
   return (mm / 25.4) * 72;
+}
+
+function isExcalidrawMarkdownFile(file: TFile, markdown: string): boolean {
+  const path = file.path.toLowerCase();
+  return (
+    path.endsWith(".excalidraw.md") ||
+    /(^|\n)excalidraw-plugin:\s*/u.test(markdown) ||
+    /(^|\n)# Excalidraw Data\s*$/mu.test(markdown) ||
+    /(^|\n)```compressed-json\s*$/mu.test(markdown)
+  );
+}
+
+function sanitizeExcalidrawMarkdownForPreview(markdown: string): string {
+  let clean = markdown.replace(/^==⚠[\s\S]*?under 'Saving'\s*(?:\r?\n|$)/mu, "");
+
+  const dataIndex = clean.search(/^# Excalidraw Data\s*$/mu);
+  if (dataIndex >= 0) clean = clean.slice(0, dataIndex);
+
+  const drawingIndex = clean.search(/^%%\s*\r?\n## Drawing\s*$/mu);
+  if (drawingIndex >= 0) clean = clean.slice(0, drawingIndex);
+
+  const compressedJsonIndex = clean.search(/^```compressed-json\s*$/mu);
+  if (compressedJsonIndex >= 0) clean = clean.slice(0, compressedJsonIndex);
+
+  const withoutFrontmatter = clean.replace(/^---\s*[\s\S]*?\r?\n---\s*/u, "").trim();
+  return withoutFrontmatter;
+}
+
+function hideExcalidrawSourceBlocks(root: HTMLElement): void {
+  const sourceBlocks = Array.from(root.querySelectorAll<HTMLElement>("pre, code"));
+  for (const block of sourceBlocks) {
+    if (isExcalidrawSourceText(block.textContent ?? "") || block.matches(".language-compressed-json")) {
+      markSkipElement(block.closest<HTMLElement>("pre") ?? block);
+    }
+  }
+
+  const lineBlocks = Array.from(root.querySelectorAll<HTMLElement>("p, li, blockquote, h1, h2, h3, h4, h5, h6"));
+  for (const block of lineBlocks) {
+    const text = normalizeLineText(block.textContent ?? "");
+    if (!text) continue;
+
+    if (/Switch to EXCALIDRAW VIEW/iu.test(text)) {
+      markSkipElement(block);
+      continue;
+    }
+
+    if (/^#?\s*Excalidraw Data$/iu.test(text) || /^##?\s*(Text Elements|Element Links|Embedded Files|Drawing)$/iu.test(text)) {
+      markElementAndFollowingSourceSiblings(root, block);
+    }
+  }
+}
+
+function markSkipElement(element: HTMLElement): void {
+  element.classList.add("mobile-pdf-exporter-skip");
+  element.setAttribute("aria-hidden", "true");
+  element.style.display = "none";
+}
+
+function markElementAndFollowingSourceSiblings(root: HTMLElement, element: HTMLElement): void {
+  const boundary = element.closest<HTMLElement>(".markdown-embed, .internal-embed, .markdown-preview-view") ?? root;
+  let current: HTMLElement = element;
+  while (current.parentElement && current.parentElement !== boundary && current.parentElement !== root) {
+    current = current.parentElement;
+  }
+
+  let sibling: Element | null = current;
+  while (sibling instanceof HTMLElement) {
+    if (sibling.classList.contains("mobile-pdf-exporter-excalidraw-preview")) break;
+    markSkipElement(sibling);
+    sibling = sibling.nextElementSibling;
+  }
+}
+
+function isExcalidrawSourceText(text: string): boolean {
+  return (
+    /```compressed-json/iu.test(text) ||
+    /\bcompressed-json\b/iu.test(text) ||
+    /\bN4KAkAR[A-Za-z0-9+/]{12,}/u.test(text) ||
+    /# Excalidraw Data\s+## Text Elements/iu.test(text)
+  );
 }
 
 function tightenSeparatorTextNodes(root: HTMLElement): void {
@@ -936,7 +1267,7 @@ function captureKeepBlockFragments(
 
   for (const image of imageFragments) blocks.push({ ...image, priority: 6 });
   for (const box of boxFragments) blocks.push({ ...box, priority: 3 });
-  for (const svg of svgFragments) blocks.push({ ...svg, priority: 3 });
+  for (const svg of svgFragments) blocks.push({ ...svg, priority: isLargeOrExcalidrawSvg(svg.element) ? 6 : 3 });
   for (const decoration of decorationFragments) blocks.push({ ...decoration, priority: 2 });
   for (const text of textFragments) blocks.push({ ...text, priority: 1 });
 
@@ -1164,6 +1495,7 @@ function parsePseudoContent(content: string): string | null {
 
 function getKeepBlockPriority(element: HTMLElement): number {
   const tag = element.tagName.toLowerCase();
+  if (tag === "svg" && isLargeOrExcalidrawSvg(element as unknown as SVGSVGElement)) return 6;
   if (tag === "img" || tag === "picture" || tag === "figure" || element.matches(".image-embed")) return 6;
   if (tag === "pre" || tag === "table") return 4;
   if (tag === "blockquote" || element.matches(".callout, .markdown-embed, .internal-embed")) return 4;
@@ -1175,11 +1507,14 @@ function getKeepBlockPriority(element: HTMLElement): number {
 function isExportableElement(element: Element): boolean {
   if (
     element.closest(
-      ".collapse-indicator, .heading-collapse-indicator, .markdown-embed-link, .copy-code-button, style, script"
+      ".mobile-pdf-exporter-skip, .collapse-indicator, .heading-collapse-indicator, .markdown-embed-link, .copy-code-button, style, script"
     )
   ) {
     return false;
   }
+
+  if (element.matches("pre.language-compressed-json, code.language-compressed-json")) return false;
+  if (isExcalidrawSourceText(element.textContent ?? "")) return false;
 
   let current: Element | null = element;
   while (current) {
@@ -1751,20 +2086,30 @@ async function drawSvgLayer(
 ): Promise<void> {
   const svgCache = new Map<string, Promise<Uint8Array | null>>();
   const visibleSvgs = svgs
-    .filter((svgFragment) => svgFragment.bottom >= options.pageTopPx && svgFragment.top <= options.pageBottomPx)
+    .filter((svgFragment) => shouldDrawSvgOnPage(svgFragment, options.pageTopPx, options.pageBottomPx))
     .filter((svgFragment) => {
       const width = svgFragment.right - svgFragment.left;
       const height = svgFragment.bottom - svgFragment.top;
-      return width > 0 && height > 0 && width <= 96 && height <= 96;
+      return width > 0 && height > 0;
     })
+    .sort((a, b) => Number(isLargeOrExcalidrawSvg(b.element)) - Number(isLargeOrExcalidrawSvg(a.element)))
     .slice(0, MAX_SVG_FRAGMENTS_PER_PAGE);
 
   const prepared = visibleSvgs.map((svgFragment) => {
-    const x = clampNumber(svgFragment.left * options.pxToPt, 0, options.pageWidthPt - 4, 0);
+    const sourceX = clampNumber(svgFragment.left * options.pxToPt, 0, options.pageWidthPt - 4, 0);
     const localTop = svgFragment.top - options.pageTopPx;
-    const width = Math.min((svgFragment.right - svgFragment.left) * options.pxToPt, options.pageWidthPt - x);
-    const height = (svgFragment.bottom - svgFragment.top) * options.pxToPt;
-    const y = options.pageHeightPt - (localTop * options.pxToPt) - height;
+    const localTopPt = Math.max(0, localTop * options.pxToPt);
+    const sourceWidth = Math.max(1, (svgFragment.right - svgFragment.left) * options.pxToPt);
+    const sourceHeight = Math.max(1, (svgFragment.bottom - svgFragment.top) * options.pxToPt);
+    const maxWidth = Math.max(8, options.pageWidthPt - sourceX);
+    const maxHeight = Math.max(8, options.pageHeightPt - localTopPt - 4);
+    const scale = isLargeOrExcalidrawSvg(svgFragment.element)
+      ? Math.min(1, maxWidth / sourceWidth, maxHeight / sourceHeight)
+      : 1;
+    const width = Math.min(sourceWidth * scale, maxWidth);
+    const height = Math.min(sourceHeight * scale, maxHeight);
+    const x = sourceX + Math.max(0, Math.min(sourceWidth - width, (sourceWidth - width) / 2));
+    const y = options.pageHeightPt - localTopPt - height;
 
     const style = getComputedStyle(svgFragment.element);
     const cacheKey = [
@@ -1798,6 +2143,25 @@ async function drawSvgLayer(
       console.warn("Mobile PDF Exporter SVG draw failed", error);
     }
   }
+}
+
+function shouldDrawSvgOnPage(fragment: SvgFragment, pageTopPx: number, pageBottomPx: number): boolean {
+  if (isLargeOrExcalidrawSvg(fragment.element)) {
+    return shouldDrawMediaOnPage(fragment, pageTopPx, pageBottomPx);
+  }
+  return fragment.bottom >= pageTopPx && fragment.top <= pageBottomPx;
+}
+
+function isLargeOrExcalidrawSvg(svg: SVGSVGElement): boolean {
+  const rect = svg.getBoundingClientRect();
+  const width = rect.width || svg.clientWidth || 0;
+  const height = rect.height || svg.clientHeight || 0;
+  return (
+    width > 96 ||
+    height > 96 ||
+    svg.classList.contains("mobile-pdf-exporter-excalidraw-svg") ||
+    Boolean(svg.closest(".mobile-pdf-exporter-excalidraw-preview, .excalidraw, .excalidraw-svg"))
+  );
 }
 
 function drawDecorationLayer(
@@ -1911,18 +2275,27 @@ async function imageElementToPngBytes(image: HTMLImageElement): Promise<Uint8Arr
   }
 }
 
-async function svgElementToPngBytes(svg: SVGSVGElement): Promise<Uint8Array | null> {
+async function svgElementToPngBytes(
+  svg: SVGSVGElement,
+  preferredScale?: number,
+  timeoutMs = SVG_IMAGE_LOAD_TIMEOUT_MS
+): Promise<Uint8Array | null> {
   try {
-    const rect = svg.getBoundingClientRect();
-    const width = Math.max(1, Math.ceil(rect.width || svg.clientWidth || 16));
-    const height = Math.max(1, Math.ceil(rect.height || svg.clientHeight || 16));
+    const { width, height } = getSvgRasterSize(svg);
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d");
     if (!context) return null;
 
-    const scale = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
-    canvas.width = Math.ceil(width * scale);
-    canvas.height = Math.ceil(height * scale);
+    const requestedScale = preferredScale ?? Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+    const maxSafeScale = Math.min(
+      requestedScale,
+      EXCALIDRAW_MAX_SLICE_WIDTH_PX / width,
+      EXCALIDRAW_MAX_SLICE_HEIGHT_PX / height,
+      Math.sqrt(EXCALIDRAW_MAX_SLICE_PIXELS / Math.max(1, width * height))
+    );
+    const scale = Math.max(Number.EPSILON, Math.min(requestedScale, maxSafeScale));
+    canvas.width = Math.max(1, Math.ceil(width * scale));
+    canvas.height = Math.max(1, Math.ceil(height * scale));
     context.setTransform(scale, 0, 0, scale, 0, 0);
 
     const clone = svg.cloneNode(true) as SVGSVGElement;
@@ -1936,7 +2309,7 @@ async function svgElementToPngBytes(svg: SVGSVGElement): Promise<Uint8Array | nu
     const blob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     try {
-      const image = await loadImage(url);
+      const image = await loadImage(url, timeoutMs);
       context.drawImage(image, 0, 0, width, height);
       return dataUrlToUint8Array(canvas.toDataURL("image/png"));
     } finally {
@@ -1948,18 +2321,135 @@ async function svgElementToPngBytes(svg: SVGSVGElement): Promise<Uint8Array | nu
   }
 }
 
-async function loadImage(url: string): Promise<HTMLImageElement> {
+async function imageBytesToHtmlImage(imageBytes: Uint8Array): Promise<HTMLImageElement> {
+  const bytes = new Uint8Array(imageBytes.byteLength);
+  bytes.set(imageBytes);
+  const blob = new Blob([bytes.buffer], { type: "image/png" });
+  const url = URL.createObjectURL(blob);
+  try {
+    return await loadImage(url, EXCALIDRAW_IMAGE_LOAD_TIMEOUT_MS);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function imageSliceToPngBytes(
+  image: HTMLImageElement,
+  sourceY: number,
+  sourceSliceHeight: number
+): Promise<Uint8Array> {
+  const sourceWidth = Math.max(1, image.naturalWidth || image.width);
+  const sourceHeight = Math.max(1, image.naturalHeight || image.height);
+  const cropY = Math.max(0, Math.min(Math.floor(sourceY), sourceHeight - 1));
+  const cropHeight = Math.max(1, Math.min(Math.ceil(sourceSliceHeight), sourceHeight - cropY));
+  const scale = Math.min(
+    1,
+    EXCALIDRAW_MAX_SLICE_WIDTH_PX / sourceWidth,
+    EXCALIDRAW_MAX_SLICE_HEIGHT_PX / cropHeight,
+    Math.sqrt(EXCALIDRAW_MAX_SLICE_PIXELS / Math.max(1, sourceWidth * cropHeight))
+  );
+  const targetWidth = Math.max(1, Math.floor(sourceWidth * scale));
+  const targetHeight = Math.max(1, Math.floor(cropHeight * scale));
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("图片切片失败：canvas 不可用。");
+
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = scale < 1 ? "high" : "medium";
+  context.drawImage(image, 0, cropY, sourceWidth, cropHeight, 0, 0, targetWidth, targetHeight);
+  return dataUrlToUint8Array(canvas.toDataURL("image/png"));
+}
+
+function getExcalidrawExportScaleCandidates(preferredScale: number): number[] {
+  const candidates = [
+    preferredScale,
+    3,
+    2.5,
+    2,
+    1.5,
+    1,
+    0.75,
+    EXCALIDRAW_MIN_EXPORT_SCALE
+  ];
+  return Array.from(
+    new Set(
+      candidates
+        .filter((scale) => Number.isFinite(scale))
+        .map((scale) => Math.max(EXCALIDRAW_MIN_EXPORT_SCALE, Math.min(preferredScale, scale)))
+        .map((scale) => Math.round(scale * 100) / 100)
+    )
+  ).sort((a, b) => b - a);
+}
+
+function getExcalidrawPngFallbackScaleCandidates(hasSvgApi: boolean): number[] {
+  const candidates = hasSvgApi
+    ? [0.75, EXCALIDRAW_MIN_EXPORT_SCALE]
+    : [1, 0.75, EXCALIDRAW_MIN_EXPORT_SCALE];
+  return Array.from(
+    new Set(
+      candidates
+        .filter((scale) => Number.isFinite(scale))
+        .map((scale) => Math.max(EXCALIDRAW_MIN_EXPORT_SCALE, Math.min(1, scale)))
+        .map((scale) => Math.round(scale * 100) / 100)
+    )
+  ).sort((a, b) => b - a);
+}
+
+function formatErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function getSvgRasterSize(svg: SVGSVGElement): { width: number; height: number } {
+  const rect = svg.getBoundingClientRect();
+  const viewBox = svg.viewBox.baseVal;
+  const width = Math.max(
+    1,
+    Math.ceil(
+      rect.width ||
+        svg.clientWidth ||
+        parseSvgLength(svg.getAttribute("width")) ||
+        viewBox.width ||
+        16
+    )
+  );
+  const height = Math.max(
+    1,
+    Math.ceil(
+      rect.height ||
+        svg.clientHeight ||
+        parseSvgLength(svg.getAttribute("height")) ||
+        viewBox.height ||
+        16
+    )
+  );
+  return { width, height };
+}
+
+function parseSvgLength(value: string | null): number {
+  if (!value) return 0;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+async function loadImage(url: string, timeoutMs = SVG_IMAGE_LOAD_TIMEOUT_MS): Promise<HTMLImageElement> {
   const image = new Image();
   let timeout = 0;
   await new Promise<void>((resolve, reject) => {
-    timeout = window.setTimeout(() => reject(new Error("SVG image load timed out.")), SVG_IMAGE_LOAD_TIMEOUT_MS);
+    timeout = window.setTimeout(() => reject(new Error("Image load timed out.")), timeoutMs);
     image.onload = () => resolve();
-    image.onerror = () => reject(new Error("SVG image load failed."));
+    image.onerror = () => reject(new Error("Image load failed."));
     image.src = url;
   }).finally(() => {
     window.clearTimeout(timeout);
   });
   return image;
+}
+
+async function blobToUint8Array(blob: Blob): Promise<Uint8Array> {
+  return new Uint8Array(await blob.arrayBuffer());
 }
 
 function dataUrlToUint8Array(dataUrl: string): Uint8Array {
@@ -2101,6 +2591,24 @@ function getPreviewDomSignature(container: HTMLElement): string {
 function hasRenderedContent(container: HTMLElement): boolean {
   if (container.textContent?.trim()) return true;
   return !!container.querySelector("img, svg, canvas, table, li, pre, blockquote, .callout, .markdown-embed, .internal-embed");
+}
+
+function hasExportableContent(container: HTMLElement): boolean {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      if (!node.nodeValue?.trim()) return NodeFilter.FILTER_REJECT;
+      if (!isExportableElement(parent)) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+
+  if (walker.nextNode()) return true;
+  return Boolean(
+    Array.from(container.querySelectorAll<HTMLElement | SVGSVGElement>("img, svg, canvas, table, li, blockquote, .callout, .markdown-embed, .internal-embed"))
+      .some((element) => isExportableElement(element))
+  );
 }
 
 async function waitForImages(container: HTMLElement, timeoutMs: number): Promise<void> {

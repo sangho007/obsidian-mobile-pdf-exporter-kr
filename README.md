@@ -12,11 +12,12 @@ One-click preview-style PDF export for Obsidian mobile and desktop.
 - Embeds images separately and draws lightweight block backgrounds for code, tables, quotes, and callouts.
 - Draws link color/underlines, task checkboxes, list bullets, ordered-list markers, and small SVG icons from the rendered preview.
 - Avoids page breaks inside images, list items, paragraphs, code blocks, tables, quotes, embeds, and callouts when they can fit on one page.
+- Exports direct `.excalidraw.md` files as pure image PDFs through the Excalidraw runtime, with automatic lower-resolution retries and page slicing for large drawings.
 - Bundles `NotoSansSC-Regular.otf` for offline Chinese text export.
 
 ## Install
 
-Download `mobile-pdf-exporter-v0.3.7.zip` from the GitHub release, then extract it into:
+Download `mobile-pdf-exporter-v0.3.12.zip` from the GitHub release, then extract it into:
 
 ```text
 <your-vault>/.obsidian/plugins/mobile-pdf-exporter/
@@ -31,6 +32,7 @@ styles.css
 README.md
 versions.json
 fonts/NotoSansSC-Regular.otf
+fonts/LICENSE-OFL.txt
 ```
 
 Restart Obsidian, or disable and re-enable the plugin from Obsidian settings.
@@ -46,6 +48,31 @@ Markor creates PDF through Android WebView printing, so its preview PDF text is 
 The local development build can try `fonts/SimHei.ttf` first and then fall back to `fonts/NotoSansSC-Regular.otf`. This public repository intentionally does not redistribute `SimHei.ttf`; the included Noto Sans SC font is the public bundled font.
 
 ## Changelog
+
+### 0.3.12
+
+- Avoids Excalidraw `createPNG` first when SVG export is available, so successful large drawing exports should not show PNG-too-large notices.
+- Rasterizes Excalidraw SVG internally with canvas size limits before building the sliced image PDF.
+- Keeps low-resolution PNG fallback only if the SVG route fails or is unavailable.
+- Keeps the 0.3.11 large drawing slicing behavior.
+
+### 0.3.11
+
+- Makes direct `.excalidraw.md` image PDF export more tolerant of large drawings.
+- Retries Excalidraw PNG export at lower scales when the generated image is too large or PDF embedding fails.
+- Slices tall Excalidraw images into phone-height PDF pages instead of creating one oversized page.
+
+### 0.3.10
+
+- Changes direct `.excalidraw.md` export to a pure image-to-PDF path.
+- Uses Excalidraw's PNG export API first, with SVG rasterization only as a fallback.
+- Keeps ordinary Markdown export on the existing selectable preview-text PDF path.
+
+### 0.3.9
+
+- Detects `.excalidraw.md` files and skips Excalidraw source blocks such as `# Excalidraw Data` and `compressed-json`, so raw drawing data is no longer exported as PDF text.
+- Uses the installed Excalidraw plugin runtime to render a direct SVG preview for Excalidraw files when available.
+- Treats large/Excalidraw SVG previews as media instead of tiny icons, keeping them scaled inside the phone-width PDF page instead of clipping or dropping them.
 
 ### 0.3.7
 
