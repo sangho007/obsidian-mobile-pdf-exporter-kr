@@ -137,8 +137,19 @@ The local development build can try `fonts/SimHei.ttf` first and then fall back 
 
 - Fixed blank PDF exports caused by hidden snapshot rendering.
 
-## License
 
+## Support
+
+<!-- sponsor-qr:start -->
+If this project helps you, you can support ongoing development with Alipay or Binance.
+
+<p align="center">
+  <img src="assets/sponsor/alipay.jpg" alt="Alipay support QR" width="260" />
+  <img src="assets/sponsor/binance.png" alt="Binance support QR" width="260" />
+</p>
+<!-- sponsor-qr:end -->
+
+## License
 Plugin code and packaged JavaScript are released under the MIT License.
 
 Bundled Noto Sans SC font is licensed under the SIL Open Font License 1.1. See `fonts/LICENSE-OFL.txt`.
