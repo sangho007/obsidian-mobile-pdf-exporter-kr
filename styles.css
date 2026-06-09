@@ -1,0 +1,94 @@
+.mobile-pdf-exporter-render-root {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 2147483647;
+  display: block;
+  width: var(--mobile-pdf-exporter-width, 794px);
+  min-height: 1px;
+  max-height: none;
+  overflow: visible;
+  opacity: 1;
+  pointer-events: none;
+  visibility: visible;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+.mobile-pdf-exporter-page {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--mobile-pdf-exporter-padding, 40px);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  overflow: hidden;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  font-size: var(--font-text-size);
+  line-height: var(--line-height-normal);
+}
+
+.mobile-pdf-exporter-page .markdown-preview-view {
+  padding: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.mobile-pdf-exporter-page *,
+.mobile-pdf-exporter-page *::before,
+.mobile-pdf-exporter-page *::after {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+.mobile-pdf-exporter-title {
+  margin: 0 0 1em;
+  font-size: 1.8em;
+  line-height: 1.2;
+}
+
+.mobile-pdf-exporter-page img,
+.mobile-pdf-exporter-page svg,
+.mobile-pdf-exporter-page canvas,
+.mobile-pdf-exporter-page video {
+  max-width: 100%;
+  height: auto;
+}
+
+.mobile-pdf-exporter-page table {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.mobile-pdf-exporter-page pre {
+  white-space: pre-wrap;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.mobile-pdf-exporter-page code,
+.mobile-pdf-exporter-page a,
+.mobile-pdf-exporter-page td,
+.mobile-pdf-exporter-page th {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.mobile-pdf-exporter-page .markdown-embed,
+.mobile-pdf-exporter-page .internal-embed,
+.mobile-pdf-exporter-page .markdown-preview-sizer {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.mobile-pdf-exporter-page .markdown-source-view,
+.mobile-pdf-exporter-page .cm-editor {
+  display: none;
+}
