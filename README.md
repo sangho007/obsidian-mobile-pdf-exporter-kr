@@ -5,8 +5,10 @@ One-click preview-style PDF export for Obsidian mobile and desktop.
 ## What it does
 
 - Adds one ribbon button, one command, and one note menu item: `导出预览版 PDF`.
+- On Obsidian mobile, shows a right-bottom `PDF` floating button when a Markdown note is open.
 - Exports the current Markdown preview to a phone-width PDF.
 - Keeps text selectable/copyable by writing a real PDF text layer.
+- Adds ordinary-note PDF options for page size, orientation, color/grayscale, margin, content scale, selectable-text PDF, and image PDF.
 - Uses the rendered Obsidian preview DOM as the layout source.
 - Draws real vector PDF text as the visible body, so exported text stays sharp and selectable.
 - Embeds images separately and draws lightweight block backgrounds for code, tables, quotes, and callouts.
@@ -17,7 +19,7 @@ One-click preview-style PDF export for Obsidian mobile and desktop.
 
 ## Install
 
-Download `mobile-pdf-exporter-v0.3.14.zip` from the GitHub release, then extract it into:
+Download `mobile-pdf-exporter-v0.3.16.zip` from the GitHub release, then extract it into:
 
 ```text
 <your-vault>/.obsidian/plugins/mobile-pdf-exporter/
@@ -48,6 +50,17 @@ Markor creates PDF through Android WebView printing, so its preview PDF text is 
 The release build embeds a Noto Sans SC font fallback in `main.js`, so community-plugin style installs work without extra font files. Local development builds can still try `fonts/SimHei.ttf` first when that file exists.
 
 ## Changelog
+
+### 0.3.16
+
+- Adds a mobile-only floating `PDF` export button for Markdown notes, enabled by default.
+- Adds a setting to turn the mobile floating export button on or off.
+
+### 0.3.15
+
+- Adds ordinary Markdown note PDF options in plugin settings: export mode, page size, orientation, color/grayscale, margin, content scale, title, and image-PDF resolution.
+- Keeps the default one-click behavior compatible with 0.3.14: mobile portrait, color, selectable text PDF.
+- Adds an image-PDF route for ordinary notes while keeping external link annotations clickable.
 
 ### 0.3.14
 

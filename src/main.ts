@@ -5,6 +5,7 @@ import {
   Notice,
   Plugin,
   PluginSettingTab,
+  Platform,
   Setting,
   TFile,
   normalizePath
@@ -14,12 +15,31 @@ import type { Color } from "pdf-lib";
 import * as fontkitModule from "@pdf-lib/fontkit";
 import notoSansScRegularBase64 from "../fonts/NotoSansSC-Regular.otf";
 
+const NOTE_PDF_EXPORT_MODES = ["selectable", "image"] as const;
+type NotePdfExportMode = typeof NOTE_PDF_EXPORT_MODES[number];
+
+const PDF_PAGE_PRESETS = ["mobile", "a4", "a5", "letter"] as const;
+type PdfPagePreset = typeof PDF_PAGE_PRESETS[number];
+
+const PDF_ORIENTATIONS = ["portrait", "landscape"] as const;
+type PdfOrientation = typeof PDF_ORIENTATIONS[number];
+
+const PDF_COLOR_MODES = ["color", "grayscale"] as const;
+type PdfColorMode = typeof PDF_COLOR_MODES[number];
+
 interface MobilePdfExporterSettings {
   outputFolder: string;
   marginMm: number;
   includeTitle: boolean;
   shareAfterExport: boolean;
   openAfterExport: boolean;
+  noteExportMode: NotePdfExportMode;
+  pagePreset: PdfPagePreset;
+  pageOrientation: PdfOrientation;
+  colorMode: PdfColorMode;
+  contentScalePercent: number;
+  imageRasterScale: number;
+  showMobileFloatingButton: boolean;
 }
 
 interface RenderedPreview {
@@ -108,6 +128,29 @@ interface KeepBlockFragment {
   priority: number;
 }
 
+interface PdfPageSizeMm {
+  width: number;
+  height: number;
+}
+
+interface PreviewPdfModel {
+  pageWidthPt: number;
+  pageHeightPt: number;
+  sourceWidthPx: number;
+  pxToPt: number;
+  pageHeightPx: number;
+  background: Color;
+  boxFragments: BoxFragment[];
+  textFragments: TextFragment[];
+  imageFragments: ImageFragment[];
+  linkFragments: LinkFragment[];
+  svgFragments: SvgFragment[];
+  decorationFragments: DecorationFragment[];
+  keepBlocks: KeepBlockFragment[];
+  contentHeightPx: number;
+  pageBreaks: number[];
+}
+
 interface ExcalidrawAutomateRuntime {
   getAPI?: () => ExcalidrawAutomateRuntime;
   reset?: () => void;
@@ -144,11 +187,32 @@ const DEFAULT_SETTINGS: MobilePdfExporterSettings = {
   marginMm: 7,
   includeTitle: true,
   shareAfterExport: true,
-  openAfterExport: false
+  openAfterExport: false,
+  noteExportMode: "selectable",
+  pagePreset: "mobile",
+  pageOrientation: "portrait",
+  colorMode: "color",
+  contentScalePercent: 100,
+  imageRasterScale: 1.5,
+  showMobileFloatingButton: true
 };
 
-const MOBILE_PAGE_MM = { width: 104, height: 225 };
+const PDF_PAGE_SIZES_MM: Record<PdfPagePreset, PdfPageSizeMm> = {
+  mobile: { width: 104, height: 225 },
+  a4: { width: 210, height: 297 },
+  a5: { width: 148, height: 210 },
+  letter: { width: 215.9, height: 279.4 }
+};
+
+const PDF_PAGE_LABELS: Record<PdfPagePreset, string> = {
+  mobile: "手机长页 104 x 225 mm",
+  a4: "A4 210 x 297 mm",
+  a5: "A5 148 x 210 mm",
+  letter: "Letter 8.5 x 11 in"
+};
+
 const PDF_SUBJECT = "Selectable preview PDF exported from Obsidian";
+const IMAGE_PDF_SUBJECT = "Image preview PDF exported from Obsidian";
 const EXCALIDRAW_IMAGE_PDF_SUBJECT = "Image PDF exported from Obsidian Excalidraw";
 const MAX_SVG_FRAGMENTS_PER_PAGE = 24;
 const SVG_IMAGE_LOAD_TIMEOUT_MS = 1800;
@@ -161,6 +225,7 @@ const EXCALIDRAW_PREFERRED_MAX_PNG_BYTES = 24 * 1024 * 1024;
 const EXCALIDRAW_MAX_SLICE_WIDTH_PX = 4096;
 const EXCALIDRAW_MAX_SLICE_HEIGHT_PX = 8192;
 const EXCALIDRAW_MAX_SLICE_PIXELS = 16_000_000;
+const PREVIEW_IMAGE_MAX_CANVAS_PIXELS = 12_000_000;
 const FRAME_WAIT_TIMEOUT_MS = 120;
 const PAGE_BREAK_PADDING_PX = 8;
 const PAGE_BREAK_MIN_ADVANCE_PX = 72;
@@ -174,6 +239,7 @@ type FontkitModuleShape = Partial<RegisteredFontkit> & { default?: Partial<Regis
 export default class MobilePdfExporterPlugin extends Plugin {
   settings: MobilePdfExporterSettings = DEFAULT_SETTINGS;
   private fontBytesPromise: Promise<ArrayBuffer> | null = null;
+  private mobileExportButtonEl: HTMLButtonElement | null = null;
 
   async onload(): Promise<void> {
     this.settings = normalizeSettings(await this.loadData());
@@ -220,10 +286,18 @@ export default class MobilePdfExporterPlugin extends Plugin {
     );
 
     this.addSettingTab(new MobilePdfExporterSettingTab(this.app, this));
+    this.registerMobileExportButton();
+  }
+
+  onunload(): void {
+    this.mobileExportButtonEl?.remove();
+    this.mobileExportButtonEl = null;
+    cleanupRenderRoots();
   }
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+    this.updateMobileExportButton();
   }
 
   async exportCurrentFile(): Promise<void> {
@@ -236,19 +310,59 @@ export default class MobilePdfExporterPlugin extends Plugin {
     await this.exportFile(file);
   }
 
+  private registerMobileExportButton(): void {
+    if (!Platform.isMobile) return;
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "mobile-pdf-exporter-floating-button";
+    button.textContent = "PDF";
+    button.setAttribute("aria-label", "导出当前笔记 PDF");
+    button.title = "导出当前笔记 PDF";
+    button.hidden = true;
+    document.body.appendChild(button);
+    this.mobileExportButtonEl = button;
+
+    this.registerDomEvent(button, "click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.exportCurrentFile();
+    });
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.updateMobileExportButton()));
+    this.registerEvent(this.app.workspace.on("file-open", () => this.updateMobileExportButton()));
+    this.registerEvent(this.app.workspace.on("layout-change", () => this.updateMobileExportButton()));
+    this.app.workspace.onLayoutReady(() => this.updateMobileExportButton());
+    window.setTimeout(() => this.updateMobileExportButton(), 500);
+  }
+
+  private updateMobileExportButton(): void {
+    const button = this.mobileExportButtonEl;
+    if (!button) return;
+
+    const file = this.getActiveMarkdownFile();
+    const visible = this.settings.showMobileFloatingButton && Boolean(file);
+    button.hidden = !visible;
+    button.classList.toggle("is-visible", visible);
+    button.disabled = !visible;
+    button.title = file ? `导出 PDF：${file.basename}` : "导出当前笔记 PDF";
+  }
+
   async exportFile(file: TFile): Promise<void> {
-    const notice = new Notice("正在导出预览版 PDF...", 0);
+    const notice = new Notice("正在导出 PDF...", 0);
     let rendered: RenderedPreview | null = null;
 
     try {
       cleanupRenderRoots();
       const markdown = await this.app.vault.cachedRead(file);
-      const pdfBlob = isExcalidrawMarkdownFile(file, markdown)
-        ? await this.renderExcalidrawToImagePdf(file)
-        : await (async () => {
-            rendered = await this.renderMarkdownPreview(file, markdown);
-            return this.renderPreviewToSelectablePdf(file, rendered.pageEl);
-          })();
+      let pdfBlob: Blob;
+      if (isExcalidrawMarkdownFile(file, markdown)) {
+        pdfBlob = await this.renderExcalidrawToImagePdf(file);
+      } else {
+        rendered = await this.renderMarkdownPreview(file, markdown);
+        pdfBlob = this.settings.noteExportMode === "image"
+          ? await this.renderPreviewToImagePdf(file, rendered.pageEl)
+          : await this.renderPreviewToSelectablePdf(file, rendered.pageEl);
+      }
 
       await this.ensureFolderExists(this.settings.outputFolder);
       const outputPath = await this.getAvailableOutputPath(file, this.settings.outputFolder);
@@ -270,8 +384,10 @@ export default class MobilePdfExporterPlugin extends Plugin {
       console.error("Mobile PDF Exporter failed", error);
       new Notice(`PDF 导出失败：${message}`, 8000);
     } finally {
-      rendered?.renderComponent.unload();
-      rendered?.rootEl.remove();
+      if (rendered) {
+        rendered.renderComponent.unload();
+        rendered.rootEl.remove();
+      }
     }
   }
 
@@ -299,7 +415,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
           );
           if (svg instanceof SVGSVGElement) {
             for (const scale of scales) {
-              const pngBytes = await svgElementToPngBytes(svg, scale, EXCALIDRAW_IMAGE_LOAD_TIMEOUT_MS);
+              const pngBytes = await svgElementToPngBytes(svg, scale, EXCALIDRAW_IMAGE_LOAD_TIMEOUT_MS, this.settings.colorMode);
               if (!pngBytes || pngBytes.byteLength <= 0) continue;
               if (pngBytes.byteLength > EXCALIDRAW_PREFERRED_MAX_PNG_BYTES && scale > EXCALIDRAW_MIN_EXPORT_SCALE) continue;
 
@@ -359,8 +475,9 @@ export default class MobilePdfExporterPlugin extends Plugin {
     pdfDoc.setTitle(file.basename);
     pdfDoc.setSubject(EXCALIDRAW_IMAGE_PDF_SUBJECT);
 
-    const pageWidthPt = mmToPt(MOBILE_PAGE_MM.width);
-    const fixedPageHeightPt = mmToPt(MOBILE_PAGE_MM.height);
+    const pageSizeMm = getConfiguredPageSizeMm(this.settings);
+    const pageWidthPt = mmToPt(pageSizeMm.width);
+    const fixedPageHeightPt = mmToPt(pageSizeMm.height);
     const pageMarginPt = mmToPt(2);
     const usableWidthPt = Math.max(24, pageWidthPt - pageMarginPt * 2);
     const usableHeightPt = Math.max(24, fixedPageHeightPt - pageMarginPt * 2);
@@ -371,7 +488,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
 
     while (sourceY < sourceHeightPx) {
       const sourceSliceHeightPx = Math.min(fullPageSourceHeightPx, sourceHeightPx - sourceY);
-      const sliceBytes = await imageSliceToPngBytes(sourceImage, sourceY, sourceSliceHeightPx);
+      const sliceBytes = await imageSliceToPngBytes(sourceImage, sourceY, sourceSliceHeightPx, this.settings.colorMode);
       const sliceImage = await pdfDoc.embedPng(sliceBytes);
       const drawHeightPt = Math.min(usableHeightPt, sourceSliceHeightPx * pxToPt);
       const pageHeightPt = singlePage
@@ -410,7 +527,8 @@ export default class MobilePdfExporterPlugin extends Plugin {
   }
 
   private async renderMarkdownPreview(file: TFile, markdown: string): Promise<RenderedPreview> {
-    const renderWidthPx = mmToPx(MOBILE_PAGE_MM.width);
+    const pageSizeMm = getConfiguredPageSizeMm(this.settings);
+    const renderWidthPx = mmToPx(pageSizeMm.width);
     const paddingPx = mmToPx(this.settings.marginMm);
     const isExcalidrawFile = isExcalidrawMarkdownFile(file, markdown);
     const markdownToRender = isExcalidrawFile
@@ -427,7 +545,8 @@ export default class MobilePdfExporterPlugin extends Plugin {
     try {
       rootEl.style.setProperty("--mobile-pdf-exporter-width", `${renderWidthPx}px`);
       rootEl.style.setProperty("--mobile-pdf-exporter-padding", `${paddingPx}px`);
-      rootEl.style.setProperty("--mobile-pdf-exporter-page-height", `${mmToPx(MOBILE_PAGE_MM.height)}px`);
+      rootEl.style.setProperty("--mobile-pdf-exporter-page-height", `${mmToPx(pageSizeMm.height)}px`);
+      rootEl.style.setProperty("--mobile-pdf-exporter-font-scale", String(this.settings.contentScalePercent / 100));
 
       const pageEl = appendElement(rootEl, "div", {
         cls: "mobile-pdf-exporter-page markdown-reading-view"
@@ -551,8 +670,137 @@ export default class MobilePdfExporterPlugin extends Plugin {
   }
 
   private async renderPreviewToSelectablePdf(file: TFile, pageEl: HTMLElement): Promise<Blob> {
-    const pageWidthPt = mmToPt(MOBILE_PAGE_MM.width);
-    const pageHeightPt = mmToPt(MOBILE_PAGE_MM.height);
+    const model = this.capturePreviewPdfModel(pageEl);
+
+    if (model.textFragments.length === 0 && model.imageFragments.length === 0 && model.svgFragments.length === 0) {
+      throw new Error("预览没有可导出的内容。");
+    }
+
+    const pdfDoc = await PDFDocument.create();
+    pdfDoc.setTitle(file.basename);
+    pdfDoc.setSubject(PDF_SUBJECT);
+    pdfDoc.registerFontkit(resolvePdfFontkit(fontkitModule));
+    const font = await pdfDoc.embedFont(await this.loadFontBytes(), { subset: true });
+
+    for (let index = 0; index < model.pageBreaks.length - 1; index += 1) {
+      const pageTopPx = model.pageBreaks[index];
+      const pageBottomPx = model.pageBreaks[index + 1];
+      const pdfPage = pdfDoc.addPage([model.pageWidthPt, model.pageHeightPt]);
+
+      pdfPage.drawRectangle({
+        x: 0,
+        y: 0,
+        width: model.pageWidthPt,
+        height: model.pageHeightPt,
+        color: outputColor(model.background, this.settings.colorMode)
+      });
+
+      drawBoxLayer(pdfPage, model.boxFragments, {
+        pageTopPx,
+        pageBottomPx,
+        pageWidthPt: model.pageWidthPt,
+        pageHeightPt: model.pageHeightPt,
+        pxToPt: model.pxToPt,
+        colorMode: this.settings.colorMode
+      });
+
+      await drawImageLayer(pdfDoc, pdfPage, model.imageFragments, {
+        pageTopPx,
+        pageBottomPx,
+        pageWidthPt: model.pageWidthPt,
+        pageHeightPt: model.pageHeightPt,
+        pxToPt: model.pxToPt,
+        colorMode: this.settings.colorMode
+      });
+
+      await drawSvgLayer(pdfDoc, pdfPage, model.svgFragments, {
+        pageTopPx,
+        pageBottomPx,
+        pageWidthPt: model.pageWidthPt,
+        pageHeightPt: model.pageHeightPt,
+        pxToPt: model.pxToPt,
+        colorMode: this.settings.colorMode
+      });
+
+      drawDecorationLayer(pdfPage, model.decorationFragments, {
+        font,
+        pageTopPx,
+        pageBottomPx,
+        pageWidthPt: model.pageWidthPt,
+        pageHeightPt: model.pageHeightPt,
+        pxToPt: model.pxToPt,
+        colorMode: this.settings.colorMode
+      });
+
+      drawTextLayer(pdfPage, model.textFragments, {
+        font,
+        pageTopPx,
+        pageBottomPx,
+        pageWidthPt: model.pageWidthPt,
+        pageHeightPt: model.pageHeightPt,
+        pxToPt: model.pxToPt,
+        colorMode: this.settings.colorMode
+      });
+
+      drawLinkAnnotationLayer(pdfPage, model.linkFragments, {
+        pageTopPx,
+        pageBottomPx,
+        pageWidthPt: model.pageWidthPt,
+        pageHeightPt: model.pageHeightPt,
+        pxToPt: model.pxToPt
+      });
+    }
+
+    const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
+    const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
+    new Uint8Array(pdfBuffer).set(pdfBytes);
+    return new Blob([pdfBuffer], { type: "application/pdf" });
+  }
+
+  private async renderPreviewToImagePdf(file: TFile, pageEl: HTMLElement): Promise<Blob> {
+    const model = this.capturePreviewPdfModel(pageEl);
+
+    if (model.textFragments.length === 0 && model.imageFragments.length === 0 && model.svgFragments.length === 0) {
+      throw new Error("预览没有可导出的内容。");
+    }
+
+    const pdfDoc = await PDFDocument.create();
+    pdfDoc.setTitle(file.basename);
+    pdfDoc.setSubject(IMAGE_PDF_SUBJECT);
+
+    for (let index = 0; index < model.pageBreaks.length - 1; index += 1) {
+      const pngBytes = await renderPreviewPageToPngBytes(model, index, {
+        colorMode: this.settings.colorMode,
+        rasterScale: this.settings.imageRasterScale
+      });
+      const pageImage = await pdfDoc.embedPng(pngBytes);
+      const pdfPage = pdfDoc.addPage([model.pageWidthPt, model.pageHeightPt]);
+      pdfPage.drawImage(pageImage, {
+        x: 0,
+        y: 0,
+        width: model.pageWidthPt,
+        height: model.pageHeightPt
+      });
+
+      drawLinkAnnotationLayer(pdfPage, model.linkFragments, {
+        pageTopPx: model.pageBreaks[index],
+        pageBottomPx: model.pageBreaks[index + 1],
+        pageWidthPt: model.pageWidthPt,
+        pageHeightPt: model.pageHeightPt,
+        pxToPt: model.pxToPt
+      });
+    }
+
+    const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
+    const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
+    new Uint8Array(pdfBuffer).set(pdfBytes);
+    return new Blob([pdfBuffer], { type: "application/pdf" });
+  }
+
+  private capturePreviewPdfModel(pageEl: HTMLElement): PreviewPdfModel {
+    const pageSizeMm = getConfiguredPageSizeMm(this.settings);
+    const pageWidthPt = mmToPt(pageSizeMm.width);
+    const pageHeightPt = mmToPt(pageSizeMm.height);
     const sourceWidthPx = Math.max(pageEl.getBoundingClientRect().width, 1);
     const pxToPt = pageWidthPt / sourceWidthPx;
     const pageHeightPx = pageHeightPt / pxToPt;
@@ -579,87 +827,25 @@ export default class MobilePdfExporterPlugin extends Plugin {
       decorationFragments,
       keepBlocks
     );
-
-    if (textFragments.length === 0 && imageFragments.length === 0 && svgFragments.length === 0) {
-      throw new Error("预览没有可导出的内容。");
-    }
-
-    const pdfDoc = await PDFDocument.create();
-    pdfDoc.setTitle(file.basename);
-    pdfDoc.setSubject(PDF_SUBJECT);
-    pdfDoc.registerFontkit(resolvePdfFontkit(fontkitModule));
-    const font = await pdfDoc.embedFont(await this.loadFontBytes(), { subset: true });
-    const background = parseCssColor(getComputedStyle(pageEl).backgroundColor) ?? rgb(1, 1, 1);
     const pageBreaks = computePageBreaks(contentHeightPx, pageHeightPx, keepBlocks);
 
-    for (let index = 0; index < pageBreaks.length - 1; index += 1) {
-      const pageTopPx = pageBreaks[index];
-      const pageBottomPx = pageBreaks[index + 1];
-      const pdfPage = pdfDoc.addPage([pageWidthPt, pageHeightPt]);
-
-      pdfPage.drawRectangle({
-        x: 0,
-        y: 0,
-        width: pageWidthPt,
-        height: pageHeightPt,
-        color: background
-      });
-
-      drawBoxLayer(pdfPage, boxFragments, {
-        pageTopPx,
-        pageBottomPx,
-        pageWidthPt,
-        pageHeightPt,
-        pxToPt
-      });
-
-      await drawImageLayer(pdfDoc, pdfPage, imageFragments, {
-        pageTopPx,
-        pageBottomPx,
-        pageWidthPt,
-        pageHeightPt,
-        pxToPt
-      });
-
-      await drawSvgLayer(pdfDoc, pdfPage, svgFragments, {
-        pageTopPx,
-        pageBottomPx,
-        pageWidthPt,
-        pageHeightPt,
-        pxToPt
-      });
-
-      drawDecorationLayer(pdfPage, decorationFragments, {
-        font,
-        pageTopPx,
-        pageBottomPx,
-        pageWidthPt,
-        pageHeightPt,
-        pxToPt
-      });
-
-      drawTextLayer(pdfPage, textFragments, {
-        font,
-        pageTopPx,
-        pageBottomPx,
-        pageWidthPt,
-        pageHeightPt,
-        pxToPt
-      });
-
-      drawLinkAnnotationLayer(pdfPage, linkFragments, {
-        pageTopPx,
-        pageBottomPx,
-        pageWidthPt,
-        pageHeightPt,
-        pxToPt
-      });
-    }
-
-    const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
-    const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
-    new Uint8Array(pdfBuffer).set(pdfBytes);
-    return new Blob([pdfBuffer], { type: "application/pdf" });
+    return {
+      pageWidthPt,
+      pageHeightPt,
+      sourceWidthPx,
+      pxToPt,
+      pageHeightPx,
+      background: parseCssColor(getComputedStyle(pageEl).backgroundColor) ?? rgb(1, 1, 1),
+      boxFragments,
+      textFragments,
+      imageFragments,
+      linkFragments,
+      svgFragments,
+      decorationFragments,
+      keepBlocks,
+      contentHeightPx,
+      pageBreaks
+    };
   }
 
   private async loadFontBytes(): Promise<ArrayBuffer> {
@@ -748,8 +934,124 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
     containerEl.replaceChildren();
     appendElement(containerEl, "h2", { text: "Mobile PDF Exporter" });
     appendElement(containerEl, "p", {
-      text: "菜单和按钮会直接导出预览版 PDF；文字层可复制，页面固定为手机阅读尺寸。"
+      text: "菜单和按钮会直接导出当前笔记 PDF；普通 Markdown 笔记可选择可复制文字版或图片版。"
     });
+
+    appendElement(containerEl, "h3", { text: "普通笔记 PDF 选项" });
+
+    new Setting(containerEl)
+      .setName("导出方式")
+      .setDesc("可复制文字版适合阅读、检索、复制；图片版适合保持视觉固定。")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("selectable", "可复制文字版")
+          .addOption("image", "图片版")
+          .setValue(this.plugin.settings.noteExportMode)
+          .onChange(async (value) => {
+            this.plugin.settings.noteExportMode = normalizeChoice(value, NOTE_PDF_EXPORT_MODES, DEFAULT_SETTINGS.noteExportMode);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("页面大小")
+      .setDesc("手机长页适合手机阅读；A4/A5/Letter 适合打印和归档。")
+      .addDropdown((dropdown) => {
+        for (const preset of PDF_PAGE_PRESETS) dropdown.addOption(preset, PDF_PAGE_LABELS[preset]);
+        dropdown
+          .setValue(this.plugin.settings.pagePreset)
+          .onChange(async (value) => {
+            this.plugin.settings.pagePreset = normalizeChoice(value, PDF_PAGE_PRESETS, DEFAULT_SETTINGS.pagePreset);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("方向")
+      .setDesc("横向会交换页面宽高。")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("portrait", "竖向")
+          .addOption("landscape", "横向")
+          .setValue(this.plugin.settings.pageOrientation)
+          .onChange(async (value) => {
+            this.plugin.settings.pageOrientation = normalizeChoice(value, PDF_ORIENTATIONS, DEFAULT_SETTINGS.pageOrientation);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("色彩")
+      .setDesc("灰度适合打印、减小颜色干扰；彩色会保留主题色、链接色和图片颜色。")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("color", "彩色")
+          .addOption("grayscale", "灰度")
+          .setValue(this.plugin.settings.colorMode)
+          .onChange(async (value) => {
+            this.plugin.settings.colorMode = normalizeChoice(value, PDF_COLOR_MODES, DEFAULT_SETTINGS.colorMode);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    const marginSetting = new Setting(containerEl)
+      .setName("页边距")
+      .setDesc(`${this.plugin.settings.marginMm} mm`);
+    marginSetting.addSlider((slider) => {
+      slider
+        .setLimits(0, 18, 1)
+        .setDynamicTooltip()
+        .setValue(this.plugin.settings.marginMm)
+        .onChange(async (value) => {
+          this.plugin.settings.marginMm = value;
+          marginSetting.setDesc(`${value} mm`);
+          await this.plugin.saveSettings();
+        });
+    });
+
+    const scaleSetting = new Setting(containerEl)
+      .setName("内容缩放")
+      .setDesc(`${this.plugin.settings.contentScalePercent}%`);
+    scaleSetting.addSlider((slider) => {
+      slider
+        .setLimits(80, 125, 5)
+        .setDynamicTooltip()
+        .setValue(this.plugin.settings.contentScalePercent)
+        .onChange(async (value) => {
+          this.plugin.settings.contentScalePercent = value;
+          scaleSetting.setDesc(`${value}%`);
+          await this.plugin.saveSettings();
+        });
+    });
+
+    new Setting(containerEl)
+      .setName("图片版清晰度")
+      .setDesc("只影响图片版普通笔记 PDF；越高清文件越大。")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("1", "标准 / 小文件")
+          .addOption("1.5", "清晰 / 推荐")
+          .addOption("2", "高清")
+          .addOption("3", "超清 / 大文件")
+          .setValue(String(this.plugin.settings.imageRasterScale))
+          .onChange(async (value) => {
+            this.plugin.settings.imageRasterScale = clampNumber(Number.parseFloat(value), 1, 3, DEFAULT_SETTINGS.imageRasterScale);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName("包含笔记标题")
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.plugin.settings.includeTitle)
+          .onChange(async (value) => {
+            this.plugin.settings.includeTitle = value;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    appendElement(containerEl, "h3", { text: "保存和分享" });
 
     new Setting(containerEl)
       .setName("Output folder")
@@ -786,6 +1088,18 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
           });
       });
 
+    new Setting(containerEl)
+      .setName("手机浮动导出按钮")
+      .setDesc("手机端打开 Markdown 笔记时，在右下角显示 PDF 按钮。")
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.plugin.settings.showMobileFloatingButton)
+          .onChange(async (value) => {
+            this.plugin.settings.showMobileFloatingButton = value;
+            await this.plugin.saveSettings();
+          });
+      });
+
     const codesContainer = appendElement(containerEl, "div", {
       cls: "mobile-pdf-exporter-settings-codes"
     });
@@ -800,7 +1114,7 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
           return src ? { ...asset, src } : null;
         })
       )
-    ).filter((item): item is { path: string; label: string; src: string } => item !== null);
+    ).filter((item): item is NonNullable<typeof item> => item !== null);
 
     if (codeItems.length === 0) {
       containerEl.remove();
@@ -847,12 +1161,25 @@ function normalizeSettings(raw: unknown): MobilePdfExporterSettings {
       : DEFAULT_SETTINGS.shareAfterExport,
     openAfterExport: typeof saved.openAfterExport === "boolean"
       ? saved.openAfterExport
-      : DEFAULT_SETTINGS.openAfterExport
+      : DEFAULT_SETTINGS.openAfterExport,
+    noteExportMode: normalizeChoice(saved.noteExportMode, NOTE_PDF_EXPORT_MODES, DEFAULT_SETTINGS.noteExportMode),
+    pagePreset: normalizeChoice(saved.pagePreset, PDF_PAGE_PRESETS, DEFAULT_SETTINGS.pagePreset),
+    pageOrientation: normalizeChoice(saved.pageOrientation, PDF_ORIENTATIONS, DEFAULT_SETTINGS.pageOrientation),
+    colorMode: normalizeChoice(saved.colorMode, PDF_COLOR_MODES, DEFAULT_SETTINGS.colorMode),
+    contentScalePercent: clampNumber(saved.contentScalePercent, 80, 125, DEFAULT_SETTINGS.contentScalePercent),
+    imageRasterScale: clampNumber(saved.imageRasterScale, 1, 3, DEFAULT_SETTINGS.imageRasterScale),
+    showMobileFloatingButton: typeof saved.showMobileFloatingButton === "boolean"
+      ? saved.showMobileFloatingButton
+      : DEFAULT_SETTINGS.showMobileFloatingButton
   };
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+}
+
+function normalizeChoice<T extends string>(value: unknown, choices: readonly T[], fallback: T): T {
+  return typeof value === "string" && choices.includes(value as T) ? value as T : fallback;
 }
 
 function resolvePdfFontkit(moduleValue: unknown): RegisteredFontkit {
@@ -890,6 +1217,20 @@ function mmToPx(mm: number): number {
 
 function mmToPt(mm: number): number {
   return (mm / 25.4) * 72;
+}
+
+function getConfiguredPageSizeMm(settings: MobilePdfExporterSettings): PdfPageSizeMm {
+  const preset = PDF_PAGE_SIZES_MM[settings.pagePreset] ?? PDF_PAGE_SIZES_MM.mobile;
+  if (settings.pageOrientation === "landscape") {
+    return {
+      width: Math.max(preset.width, preset.height),
+      height: Math.min(preset.width, preset.height)
+    };
+  }
+  return {
+    width: Math.min(preset.width, preset.height),
+    height: Math.max(preset.width, preset.height)
+  };
 }
 
 function isExcalidrawMarkdownFile(file: TFile, markdown: string): boolean {
@@ -1898,6 +2239,7 @@ function drawBoxLayer(
     pageWidthPt: number;
     pageHeightPt: number;
     pxToPt: number;
+    colorMode: PdfColorMode;
   }
 ): void {
   for (const box of boxes) {
@@ -1915,8 +2257,8 @@ function drawBoxLayer(
       y,
       width,
       height,
-      color: box.background ?? undefined,
-      borderColor: box.border ?? undefined,
+      color: box.background ? outputColor(box.background, options.colorMode) : undefined,
+      borderColor: box.border ? outputColor(box.border, options.colorMode) : undefined,
       borderWidth: box.border ? 0.5 : 0
     });
   }
@@ -1932,6 +2274,7 @@ function drawTextLayer(
     pageWidthPt: number;
     pageHeightPt: number;
     pxToPt: number;
+    colorMode: PdfColorMode;
   }
 ): void {
   const { font, pageTopPx, pageBottomPx, pageWidthPt, pageHeightPt, pxToPt } = options;
@@ -1951,7 +2294,7 @@ function drawTextLayer(
       y: baselineY,
       size: fontSize,
       font,
-      color: fragment.color,
+      color: outputColor(fragment.color, options.colorMode),
       maxWidth
     });
 
@@ -1962,7 +2305,7 @@ function drawTextLayer(
         start: { x, y: underlineY },
         end: { x: x + inkWidth, y: underlineY },
         thickness: Math.max(0.35, drawn.size * 0.055),
-        color: fragment.color
+        color: outputColor(fragment.color, options.colorMode)
       });
     }
   }
@@ -2094,12 +2437,13 @@ async function drawImageLayer(
     pageWidthPt: number;
     pageHeightPt: number;
     pxToPt: number;
+    colorMode: PdfColorMode;
   }
 ): Promise<void> {
   for (const imageFragment of images) {
     if (!shouldDrawMediaOnPage(imageFragment, options.pageTopPx, options.pageBottomPx)) continue;
 
-    const imageBytes = await imageElementToPngBytes(imageFragment.element);
+    const imageBytes = await imageElementToPngBytes(imageFragment.element, options.colorMode);
     if (!imageBytes) continue;
 
     const embeddedImage = await pdfDoc.embedPng(imageBytes);
@@ -2140,6 +2484,7 @@ async function drawSvgLayer(
     pageWidthPt: number;
     pageHeightPt: number;
     pxToPt: number;
+    colorMode: PdfColorMode;
   }
 ): Promise<void> {
   const svgCache = new Map<string, Promise<Uint8Array | null>>();
@@ -2178,7 +2523,7 @@ async function drawSvgLayer(
     ].join("|");
     let imagePromise = svgCache.get(cacheKey);
     if (!imagePromise) {
-      imagePromise = svgElementToPngBytes(svgFragment.element);
+      imagePromise = svgElementToPngBytes(svgFragment.element, undefined, SVG_IMAGE_LOAD_TIMEOUT_MS, options.colorMode);
       svgCache.set(cacheKey, imagePromise);
     }
     return { x, y, width, height, imagePromise };
@@ -2232,6 +2577,7 @@ function drawDecorationLayer(
     pageWidthPt: number;
     pageHeightPt: number;
     pxToPt: number;
+    colorMode: PdfColorMode;
   }
 ): void {
   for (const decoration of decorations) {
@@ -2244,7 +2590,7 @@ function drawDecorationLayer(
     const y = options.pageHeightPt - (localTop * options.pxToPt) - height;
 
     if (decoration.kind === "checkbox") {
-      drawCheckbox(page, { x, y, width, height, decoration });
+      drawCheckbox(page, { x, y, width, height, decoration, colorMode: options.colorMode });
       continue;
     }
 
@@ -2254,7 +2600,7 @@ function drawDecorationLayer(
         x: x + width / 2,
         y: y + height / 2,
         size: size / 2,
-        color: decoration.color
+        color: outputColor(decoration.color, options.colorMode)
       });
       continue;
     }
@@ -2266,7 +2612,7 @@ function drawDecorationLayer(
         y: y + Math.max(0, height - fontSize) * 0.45,
         size: fontSize,
         font: options.font,
-        color: decoration.color,
+        color: outputColor(decoration.color, options.colorMode),
         maxWidth: width
       });
     }
@@ -2281,13 +2627,15 @@ function drawCheckbox(
     width: number;
     height: number;
     decoration: DecorationFragment;
+    colorMode: PdfColorMode;
   }
 ): void {
-  const { x, y, width, height, decoration } = options;
+  const { x, y, width, height, decoration, colorMode } = options;
   const size = Math.max(4, Math.min(width, height));
   const offsetX = x + (width - size) / 2;
   const offsetY = y + (height - size) / 2;
-  const border = decoration.border ?? decoration.color;
+  const border = outputColor(decoration.border ?? decoration.color, colorMode);
+  const fill = outputColor(decoration.color, colorMode);
 
   page.drawRectangle({
     x: offsetX,
@@ -2296,7 +2644,7 @@ function drawCheckbox(
     height: size,
     borderColor: border,
     borderWidth: Math.max(0.35, size * 0.08),
-    color: decoration.checked ? decoration.color : undefined
+    color: decoration.checked ? fill : undefined
   });
 
   if (!decoration.checked) return;
@@ -2317,7 +2665,335 @@ function drawCheckbox(
   });
 }
 
-async function imageElementToPngBytes(image: HTMLImageElement): Promise<Uint8Array | null> {
+async function renderPreviewPageToPngBytes(
+  model: PreviewPdfModel,
+  pageIndex: number,
+  options: {
+    colorMode: PdfColorMode;
+    rasterScale: number;
+  }
+): Promise<Uint8Array> {
+  const pageTopPx = model.pageBreaks[pageIndex];
+  const pageBottomPx = model.pageBreaks[pageIndex + 1];
+  const scale = getSafePreviewImageScale(model.sourceWidthPx, model.pageHeightPx, options.rasterScale);
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("图片版 PDF 渲染失败：canvas 不可用。");
+
+  canvas.width = Math.max(1, Math.ceil(model.sourceWidthPx * scale));
+  canvas.height = Math.max(1, Math.ceil(model.pageHeightPx * scale));
+  context.setTransform(scale, 0, 0, scale, 0, 0);
+  context.fillStyle = colorToCss(model.background, "color");
+  context.fillRect(0, 0, model.sourceWidthPx, model.pageHeightPx);
+
+  drawCanvasBoxLayer(context, model.boxFragments, {
+    pageTopPx,
+    pageBottomPx,
+    colorMode: "color"
+  });
+  await drawCanvasImageLayer(context, model.imageFragments, {
+    pageTopPx,
+    pageBottomPx,
+    sourceWidthPx: model.sourceWidthPx,
+    pageHeightPx: model.pageHeightPx
+  });
+  await drawCanvasSvgLayer(context, model.svgFragments, {
+    pageTopPx,
+    pageBottomPx,
+    sourceWidthPx: model.sourceWidthPx,
+    pageHeightPx: model.pageHeightPx,
+    rasterScale: scale
+  });
+  drawCanvasDecorationLayer(context, model.decorationFragments, {
+    pageTopPx,
+    pageBottomPx,
+    sourceWidthPx: model.sourceWidthPx,
+    pageHeightPx: model.pageHeightPx,
+    colorMode: "color"
+  });
+  drawCanvasTextLayer(context, model.textFragments, {
+    pageTopPx,
+    pageBottomPx,
+    sourceWidthPx: model.sourceWidthPx,
+    colorMode: "color"
+  });
+
+  if (options.colorMode === "grayscale") {
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    applyCanvasGrayscale(context, canvas.width, canvas.height);
+  }
+
+  return dataUrlToUint8Array(canvas.toDataURL("image/png"));
+}
+
+function getSafePreviewImageScale(widthPx: number, heightPx: number, requestedScale: number): number {
+  const safeRequested = clampNumber(requestedScale, 1, 3, DEFAULT_SETTINGS.imageRasterScale);
+  const maxPixelScale = Math.sqrt(PREVIEW_IMAGE_MAX_CANVAS_PIXELS / Math.max(1, widthPx * heightPx));
+  return Math.max(0.75, Math.min(safeRequested, maxPixelScale));
+}
+
+function drawCanvasBoxLayer(
+  context: CanvasRenderingContext2D,
+  boxes: BoxFragment[],
+  options: {
+    pageTopPx: number;
+    pageBottomPx: number;
+    colorMode: PdfColorMode;
+  }
+): void {
+  for (const box of boxes) {
+    if (box.bottom < options.pageTopPx || box.top > options.pageBottomPx) continue;
+    if (!box.background && !box.border) continue;
+
+    const x = Math.max(0, box.left);
+    const y = box.top - options.pageTopPx;
+    const width = Math.max(1, box.right - box.left);
+    const height = Math.max(1, box.bottom - box.top);
+
+    if (box.background) {
+      context.fillStyle = colorToCss(box.background, options.colorMode);
+      context.fillRect(x, y, width, height);
+    }
+    if (box.border) {
+      context.strokeStyle = colorToCss(box.border, options.colorMode);
+      context.lineWidth = 1;
+      context.strokeRect(x, y, width, height);
+    }
+  }
+}
+
+async function drawCanvasImageLayer(
+  context: CanvasRenderingContext2D,
+  images: ImageFragment[],
+  options: {
+    pageTopPx: number;
+    pageBottomPx: number;
+    sourceWidthPx: number;
+    pageHeightPx: number;
+  }
+): Promise<void> {
+  for (const imageFragment of images) {
+    if (!shouldDrawMediaOnPage(imageFragment, options.pageTopPx, options.pageBottomPx)) continue;
+
+    const imageBytes = await imageElementToPngBytes(imageFragment.element, "color");
+    if (!imageBytes) continue;
+
+    try {
+      const image = await imageBytesToHtmlImage(imageBytes);
+      const sourceX = clampNumber(imageFragment.left, 0, options.sourceWidthPx - 4, 0);
+      const localTop = Math.max(0, imageFragment.top - options.pageTopPx);
+      const sourceWidth = Math.max(1, imageFragment.right - imageFragment.left);
+      const sourceHeight = Math.max(1, imageFragment.bottom - imageFragment.top);
+      const maxWidth = Math.max(8, options.sourceWidthPx - sourceX);
+      const maxHeight = Math.max(8, options.pageHeightPx - localTop - 4);
+      const scale = Math.min(1, maxWidth / sourceWidth, maxHeight / sourceHeight);
+      const width = sourceWidth * scale;
+      const height = sourceHeight * scale;
+      const x = sourceX + Math.max(0, Math.min(sourceWidth - width, (sourceWidth - width) / 2));
+      const y = localTop;
+      context.drawImage(image, x, y, width, height);
+    } catch (error) {
+      console.warn("Mobile PDF Exporter canvas image draw failed", error);
+    }
+  }
+}
+
+async function drawCanvasSvgLayer(
+  context: CanvasRenderingContext2D,
+  svgs: SvgFragment[],
+  options: {
+    pageTopPx: number;
+    pageBottomPx: number;
+    sourceWidthPx: number;
+    pageHeightPx: number;
+    rasterScale: number;
+  }
+): Promise<void> {
+  const visibleSvgs = svgs
+    .filter((svgFragment) => shouldDrawSvgOnPage(svgFragment, options.pageTopPx, options.pageBottomPx))
+    .filter((svgFragment) => svgFragment.right > svgFragment.left && svgFragment.bottom > svgFragment.top)
+    .sort((a, b) => Number(isLargeOrExcalidrawSvg(b.element)) - Number(isLargeOrExcalidrawSvg(a.element)))
+    .slice(0, MAX_SVG_FRAGMENTS_PER_PAGE);
+
+  for (const svgFragment of visibleSvgs) {
+    try {
+      const imageBytes = await svgElementToPngBytes(svgFragment.element, options.rasterScale, SVG_IMAGE_LOAD_TIMEOUT_MS, "color");
+      if (!imageBytes) continue;
+      const image = await imageBytesToHtmlImage(imageBytes);
+      const sourceX = clampNumber(svgFragment.left, 0, options.sourceWidthPx - 4, 0);
+      const localTop = Math.max(0, svgFragment.top - options.pageTopPx);
+      const sourceWidth = Math.max(1, svgFragment.right - svgFragment.left);
+      const sourceHeight = Math.max(1, svgFragment.bottom - svgFragment.top);
+      const maxWidth = Math.max(8, options.sourceWidthPx - sourceX);
+      const maxHeight = Math.max(8, options.pageHeightPx - localTop - 4);
+      const scale = isLargeOrExcalidrawSvg(svgFragment.element)
+        ? Math.min(1, maxWidth / sourceWidth, maxHeight / sourceHeight)
+        : 1;
+      const width = Math.min(sourceWidth * scale, maxWidth);
+      const height = Math.min(sourceHeight * scale, maxHeight);
+      const x = sourceX + Math.max(0, Math.min(sourceWidth - width, (sourceWidth - width) / 2));
+      const y = localTop;
+      context.drawImage(image, x, y, width, height);
+    } catch (error) {
+      console.warn("Mobile PDF Exporter canvas SVG draw failed", error);
+    }
+  }
+}
+
+function drawCanvasDecorationLayer(
+  context: CanvasRenderingContext2D,
+  decorations: DecorationFragment[],
+  options: {
+    pageTopPx: number;
+    pageBottomPx: number;
+    sourceWidthPx: number;
+    pageHeightPx: number;
+    colorMode: PdfColorMode;
+  }
+): void {
+  for (const decoration of decorations) {
+    if (decoration.bottom < options.pageTopPx || decoration.top > options.pageBottomPx) continue;
+
+    const x = clampNumber(decoration.left, 0, options.sourceWidthPx - 4, 0);
+    const y = decoration.top - options.pageTopPx;
+    const width = Math.max(1, Math.min(decoration.right - decoration.left, options.sourceWidthPx - x));
+    const height = Math.max(1, Math.min(decoration.bottom - decoration.top, options.pageHeightPx - y));
+
+    if (decoration.kind === "checkbox") {
+      drawCanvasCheckbox(context, { x, y, width, height, decoration, colorMode: options.colorMode });
+      continue;
+    }
+
+    if (decoration.kind === "bullet") {
+      const size = Math.max(2.4, Math.min(width, height));
+      context.fillStyle = colorToCss(decoration.color, options.colorMode);
+      context.beginPath();
+      context.arc(x + width / 2, y + height / 2, size / 2, 0, Math.PI * 2);
+      context.fill();
+      continue;
+    }
+
+    if ((decoration.kind === "marker" || decoration.kind === "text") && decoration.text) {
+      const fontSize = Math.max(5, decoration.fontSizePx * (decoration.kind === "text" ? 0.95 : 0.88));
+      drawCanvasText(context, decoration.text, {
+        x,
+        y: y + Math.max(0, height - fontSize) * 0.45 + fontSize * 0.86,
+        size: fontSize,
+        color: decoration.color,
+        maxWidth: width,
+        colorMode: options.colorMode
+      });
+    }
+  }
+}
+
+function drawCanvasCheckbox(
+  context: CanvasRenderingContext2D,
+  options: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    decoration: DecorationFragment;
+    colorMode: PdfColorMode;
+  }
+): void {
+  const { x, y, width, height, decoration, colorMode } = options;
+  const size = Math.max(5, Math.min(width, height));
+  const offsetX = x + (width - size) / 2;
+  const offsetY = y + (height - size) / 2;
+  const border = colorToCss(decoration.border ?? decoration.color, colorMode);
+  const fill = colorToCss(decoration.color, colorMode);
+
+  context.lineWidth = Math.max(1, size * 0.08);
+  context.strokeStyle = border;
+  if (decoration.checked) {
+    context.fillStyle = fill;
+    context.fillRect(offsetX, offsetY, size, size);
+  }
+  context.strokeRect(offsetX, offsetY, size, size);
+
+  if (!decoration.checked) return;
+
+  context.strokeStyle = "#fff";
+  context.lineWidth = Math.max(1, size * 0.11);
+  context.beginPath();
+  context.moveTo(offsetX + size * 0.22, offsetY + size * 0.48);
+  context.lineTo(offsetX + size * 0.43, offsetY + size * 0.7);
+  context.lineTo(offsetX + size * 0.78, offsetY + size * 0.28);
+  context.stroke();
+}
+
+function drawCanvasTextLayer(
+  context: CanvasRenderingContext2D,
+  fragments: TextFragment[],
+  options: {
+    pageTopPx: number;
+    pageBottomPx: number;
+    sourceWidthPx: number;
+    colorMode: PdfColorMode;
+  }
+): void {
+  for (const fragment of fragments) {
+    if (fragment.bottom < options.pageTopPx || fragment.top > options.pageBottomPx) continue;
+
+    const fontSize = Math.max(5, fragment.fontSizePx);
+    const x = clampNumber(fragment.left, 0, options.sourceWidthPx - 4, 0);
+    const y = fragment.top - options.pageTopPx + fragment.fontSizePx * 0.86;
+    const measuredWidth = Math.max(1, fragment.right - fragment.left);
+    const maxWidth = Math.max(8, Math.min(options.sourceWidthPx - x - 2, measuredWidth + 2));
+    const drawn = drawCanvasText(context, fragment.text, {
+      x,
+      y,
+      size: fontSize,
+      color: fragment.color,
+      maxWidth,
+      colorMode: options.colorMode
+    });
+
+    if (fragment.underline && drawn.width > 1) {
+      const underlineY = y + Math.max(0.75, drawn.size * 0.12);
+      context.strokeStyle = colorToCss(fragment.color, options.colorMode);
+      context.lineWidth = Math.max(0.65, drawn.size * 0.055);
+      context.beginPath();
+      context.moveTo(x, underlineY);
+      context.lineTo(x + Math.min(maxWidth, drawn.width), underlineY);
+      context.stroke();
+    }
+  }
+}
+
+function drawCanvasText(
+  context: CanvasRenderingContext2D,
+  text: string,
+  options: {
+    x: number;
+    y: number;
+    size: number;
+    color: Color;
+    maxWidth: number;
+    colorMode: PdfColorMode;
+  }
+): { text: string; size: number; width: number } {
+  const clean = stripProblematicPdfChars(compactSeparatorSpacing(text));
+  if (!clean) return { text: "", size: options.size, width: 0 };
+
+  let size = options.size;
+  context.font = `${size}px "Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif`;
+  let width = context.measureText(clean).width;
+  if (width > options.maxWidth) {
+    size = Math.max(5, size * (options.maxWidth / width));
+    context.font = `${size}px "Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif`;
+    width = context.measureText(clean).width;
+  }
+
+  context.fillStyle = colorToCss(options.color, options.colorMode);
+  context.textBaseline = "alphabetic";
+  context.fillText(clean, options.x, options.y, options.maxWidth);
+  return { text: clean, size, width };
+}
+
+async function imageElementToPngBytes(image: HTMLImageElement, colorMode: PdfColorMode = "color"): Promise<Uint8Array | null> {
   try {
     const canvas = document.createElement("canvas");
     const context = canvas.getContext("2d");
@@ -2326,6 +3002,7 @@ async function imageElementToPngBytes(image: HTMLImageElement): Promise<Uint8Arr
     canvas.width = image.naturalWidth;
     canvas.height = image.naturalHeight;
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    if (colorMode === "grayscale") applyCanvasGrayscale(context, canvas.width, canvas.height);
     return dataUrlToUint8Array(canvas.toDataURL("image/png"));
   } catch (error) {
     console.warn("Mobile PDF Exporter image embed failed", error);
@@ -2336,7 +3013,8 @@ async function imageElementToPngBytes(image: HTMLImageElement): Promise<Uint8Arr
 async function svgElementToPngBytes(
   svg: SVGSVGElement,
   preferredScale?: number,
-  timeoutMs = SVG_IMAGE_LOAD_TIMEOUT_MS
+  timeoutMs = SVG_IMAGE_LOAD_TIMEOUT_MS,
+  colorMode: PdfColorMode = "color"
 ): Promise<Uint8Array | null> {
   try {
     const { width, height } = getSvgRasterSize(svg);
@@ -2369,6 +3047,7 @@ async function svgElementToPngBytes(
     try {
       const image = await loadImage(url, timeoutMs);
       context.drawImage(image, 0, 0, width, height);
+      if (colorMode === "grayscale") applyCanvasGrayscale(context, canvas.width, canvas.height);
       return dataUrlToUint8Array(canvas.toDataURL("image/png"));
     } finally {
       URL.revokeObjectURL(url);
@@ -2394,7 +3073,8 @@ async function imageBytesToHtmlImage(imageBytes: Uint8Array): Promise<HTMLImageE
 async function imageSliceToPngBytes(
   image: HTMLImageElement,
   sourceY: number,
-  sourceSliceHeight: number
+  sourceSliceHeight: number,
+  colorMode: PdfColorMode = "color"
 ): Promise<Uint8Array> {
   const sourceWidth = Math.max(1, image.naturalWidth || image.width);
   const sourceHeight = Math.max(1, image.naturalHeight || image.height);
@@ -2417,6 +3097,7 @@ async function imageSliceToPngBytes(
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = scale < 1 ? "high" : "medium";
   context.drawImage(image, 0, cropY, sourceWidth, cropHeight, 0, 0, targetWidth, targetHeight);
+  if (colorMode === "grayscale") applyCanvasGrayscale(context, canvas.width, canvas.height);
   return dataUrlToUint8Array(canvas.toDataURL("image/png"));
 }
 
@@ -2562,6 +3243,56 @@ function parseCssColorChannel(value: string | undefined): number {
   if (!value) return Number.NaN;
   if (value.endsWith("%")) return (Number.parseFloat(value) / 100) * 255;
   return Number.parseFloat(value);
+}
+
+function outputColor(color: Color, colorMode: PdfColorMode): Color {
+  if (colorMode !== "grayscale") return color;
+  const channels = getPdfRgbChannels(color);
+  if (!channels) return color;
+  const gray = toGrayChannel(channels.red, channels.green, channels.blue);
+  return rgb(gray, gray, gray);
+}
+
+function colorToCss(color: Color, colorMode: PdfColorMode): string {
+  const channels = getPdfRgbChannels(outputColor(color, colorMode));
+  if (!channels) return colorMode === "grayscale" ? "rgb(128, 128, 128)" : "rgb(0, 0, 0)";
+  return `rgb(${Math.round(channels.red * 255)}, ${Math.round(channels.green * 255)}, ${Math.round(channels.blue * 255)})`;
+}
+
+function getPdfRgbChannels(color: Color): { red: number; green: number; blue: number } | null {
+  const candidate = color as Partial<{ red: number; green: number; blue: number }>;
+  if (
+    typeof candidate.red === "number" &&
+    typeof candidate.green === "number" &&
+    typeof candidate.blue === "number"
+  ) {
+    return {
+      red: clampNumber(candidate.red, 0, 1, 0),
+      green: clampNumber(candidate.green, 0, 1, 0),
+      blue: clampNumber(candidate.blue, 0, 1, 0)
+    };
+  }
+  return null;
+}
+
+function toGrayChannel(red: number, green: number, blue: number): number {
+  return clampNumber(red * 0.2126 + green * 0.7152 + blue * 0.0722, 0, 1, 0);
+}
+
+function applyCanvasGrayscale(context: CanvasRenderingContext2D, width: number, height: number): void {
+  try {
+    const imageData = context.getImageData(0, 0, width, height);
+    const data = imageData.data;
+    for (let index = 0; index < data.length; index += 4) {
+      const gray = Math.round(data[index] * 0.2126 + data[index + 1] * 0.7152 + data[index + 2] * 0.0722);
+      data[index] = gray;
+      data[index + 1] = gray;
+      data[index + 2] = gray;
+    }
+    context.putImageData(imageData, 0, 0);
+  } catch (error) {
+    console.warn("Mobile PDF Exporter grayscale conversion failed", error);
+  }
 }
 
 function cleanupRenderRoots(): void {
