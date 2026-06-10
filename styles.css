@@ -193,6 +193,46 @@
   color: var(--text-muted);
 }
 
+.mobile-pdf-exporter-settings-codes {
+  margin-top: 28px;
+  padding-top: 18px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.mobile-pdf-exporter-settings-codes-title {
+  margin-bottom: 12px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+}
+
+.mobile-pdf-exporter-settings-codes-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.mobile-pdf-exporter-settings-code {
+  width: 132px;
+}
+
+.mobile-pdf-exporter-settings-code-image {
+  display: block;
+  width: 132px;
+  height: 132px;
+  object-fit: contain;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.mobile-pdf-exporter-settings-code-label {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-align: center;
+}
+
 @media print {
   @page {
     size: 104mm 225mm;

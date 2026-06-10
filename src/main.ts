@@ -164,6 +164,10 @@ const EXCALIDRAW_MAX_SLICE_PIXELS = 16_000_000;
 const FRAME_WAIT_TIMEOUT_MS = 120;
 const PAGE_BREAK_PADDING_PX = 8;
 const PAGE_BREAK_MIN_ADVANCE_PX = 72;
+const SETTINGS_EXTRA_CODE_ASSETS = [
+  { path: "extras/code-1.jpg", label: "二维码 1" },
+  { path: "extras/code-2.png", label: "二维码 2" }
+] as const;
 type RegisteredFontkit = Parameters<PDFDocument["registerFontkit"]>[0];
 type FontkitModuleShape = Partial<RegisteredFontkit> & { default?: Partial<RegisteredFontkit> };
 
@@ -673,6 +677,12 @@ export default class MobilePdfExporterPlugin extends Plugin {
     return normalizePath(`${pluginDir}/${relativePath}`);
   }
 
+  async getOptionalAssetResourcePath(relativePath: string): Promise<string | null> {
+    const assetPath = this.getPluginAssetPath(relativePath);
+    if (!(await this.app.vault.adapter.exists(assetPath))) return null;
+    return this.app.vault.adapter.getResourcePath(assetPath);
+  }
+
   private async getAvailableOutputPath(file: TFile, outputFolder: string): Promise<string> {
     const folder = normalizeOutputFolder(outputFolder);
     const date = new Date();
@@ -775,6 +785,52 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           });
       });
+
+    const codesContainer = appendElement(containerEl, "div", {
+      cls: "mobile-pdf-exporter-settings-codes"
+    });
+    void this.renderExtraCodes(codesContainer);
+  }
+
+  private async renderExtraCodes(containerEl: HTMLElement): Promise<void> {
+    const codeItems = (
+      await Promise.all(
+        SETTINGS_EXTRA_CODE_ASSETS.map(async (asset) => {
+          const src = await this.plugin.getOptionalAssetResourcePath(asset.path);
+          return src ? { ...asset, src } : null;
+        })
+      )
+    ).filter((item): item is { path: string; label: string; src: string } => item !== null);
+
+    if (codeItems.length === 0) {
+      containerEl.remove();
+      return;
+    }
+
+    appendElement(containerEl, "div", {
+      cls: "mobile-pdf-exporter-settings-codes-title",
+      text: "二维码"
+    });
+
+    const gridEl = appendElement(containerEl, "div", {
+      cls: "mobile-pdf-exporter-settings-codes-grid"
+    });
+
+    for (const item of codeItems) {
+      const codeEl = appendElement(gridEl, "div", {
+        cls: "mobile-pdf-exporter-settings-code"
+      });
+      const imageEl = appendElement(codeEl, "img", {
+        cls: "mobile-pdf-exporter-settings-code-image"
+      });
+      imageEl.src = item.src;
+      imageEl.alt = item.label;
+      imageEl.loading = "lazy";
+      appendElement(codeEl, "div", {
+        cls: "mobile-pdf-exporter-settings-code-label",
+        text: item.label
+      });
+    }
   }
 }
 
