@@ -193,6 +193,26 @@
   color: var(--text-muted);
 }
 
+.mobile-pdf-exporter-options-modal {
+  max-width: 560px;
+}
+
+.mobile-pdf-exporter-options-subtitle {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+}
+
+.mobile-pdf-exporter-options-actions {
+  padding-top: 14px;
+}
+
+.mobile-pdf-exporter-options-actions .setting-item-control {
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .mobile-pdf-exporter-settings-codes {
   margin-top: 28px;
   padding-top: 18px;

@@ -1,6 +1,6 @@
 {
   "name": "obsidian-mobile-pdf-exporter",
-  "version": "0.3.15",
+  "version": "0.3.17",
   "description": "One-click selectable preview PDF export plugin for Obsidian.",
   "main": "main.js",
   "scripts": {

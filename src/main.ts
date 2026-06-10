@@ -2,6 +2,7 @@ import {
   App,
   Component,
   MarkdownRenderer,
+  Modal,
   Notice,
   Plugin,
   PluginSettingTab,
@@ -251,7 +252,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
       checkCallback: (checking) => {
         const file = this.getActiveMarkdownFile();
         if (!file) return false;
-        if (!checking) void this.exportFile(file);
+        if (!checking) this.openExportOptionsModal(file);
         return true;
       }
     });
@@ -263,7 +264,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
           item
             .setTitle("导出预览版 PDF")
             .setIcon("file-output")
-            .onClick(() => void this.exportFile(file));
+            .onClick(() => this.openExportOptionsModal(file));
         });
       })
     );
@@ -276,7 +277,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
           item
             .setTitle("导出预览版 PDF")
             .setIcon("file-output")
-            .onClick(() => void this.exportFile(file));
+            .onClick(() => this.openExportOptionsModal(file));
         });
       })
     );
@@ -295,10 +296,16 @@ export default class MobilePdfExporterPlugin extends Plugin {
       return;
     }
 
-    await this.exportFile(file);
+    this.openExportOptionsModal(file);
   }
 
-  async exportFile(file: TFile): Promise<void> {
+  openExportOptionsModal(file: TFile): void {
+    new MobilePdfExportOptionsModal(this.app, this, file).open();
+  }
+
+  async exportFile(file: TFile, exportSettings?: MobilePdfExporterSettings): Promise<void> {
+    const previousSettings = this.settings;
+    if (exportSettings) this.settings = cloneSettings(exportSettings);
     const notice = new Notice("正在导出 PDF...", 0);
     let rendered: RenderedPreview | null = null;
 
@@ -339,6 +346,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
         rendered.renderComponent.unload();
         rendered.rootEl.remove();
       }
+      this.settings = previousSettings;
     }
   }
 
@@ -875,6 +883,213 @@ export default class MobilePdfExporterPlugin extends Plugin {
   }
 }
 
+class MobilePdfExportOptionsModal extends Modal {
+  private draft: MobilePdfExporterSettings;
+  private saveAsDefault = false;
+  private exporting = false;
+
+  constructor(
+    app: App,
+    private plugin: MobilePdfExporterPlugin,
+    private file: TFile
+  ) {
+    super(app);
+    this.draft = cloneSettings(plugin.settings);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("mobile-pdf-exporter-options-modal");
+
+    appendElement(contentEl, "h2", { text: "PDF 导出选项" });
+    appendElement(contentEl, "p", {
+      cls: "mobile-pdf-exporter-options-subtitle",
+      text: this.file.basename
+    });
+
+    new Setting(contentEl)
+      .setName("导出方式")
+      .setDesc("可复制文字版适合阅读、检索、复制；图片版适合保持视觉固定。")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("selectable", "可复制文字版")
+          .addOption("image", "图片版")
+          .setValue(this.draft.noteExportMode)
+          .onChange((value) => {
+            this.draft.noteExportMode = normalizeChoice(value, NOTE_PDF_EXPORT_MODES, DEFAULT_SETTINGS.noteExportMode);
+          });
+      });
+
+    new Setting(contentEl)
+      .setName("页面大小")
+      .addDropdown((dropdown) => {
+        for (const preset of PDF_PAGE_PRESETS) dropdown.addOption(preset, PDF_PAGE_LABELS[preset]);
+        dropdown
+          .setValue(this.draft.pagePreset)
+          .onChange((value) => {
+            this.draft.pagePreset = normalizeChoice(value, PDF_PAGE_PRESETS, DEFAULT_SETTINGS.pagePreset);
+          });
+      });
+
+    new Setting(contentEl)
+      .setName("方向")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("portrait", "竖向")
+          .addOption("landscape", "横向")
+          .setValue(this.draft.pageOrientation)
+          .onChange((value) => {
+            this.draft.pageOrientation = normalizeChoice(value, PDF_ORIENTATIONS, DEFAULT_SETTINGS.pageOrientation);
+          });
+      });
+
+    new Setting(contentEl)
+      .setName("色彩")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("color", "彩色")
+          .addOption("grayscale", "灰度")
+          .setValue(this.draft.colorMode)
+          .onChange((value) => {
+            this.draft.colorMode = normalizeChoice(value, PDF_COLOR_MODES, DEFAULT_SETTINGS.colorMode);
+          });
+      });
+
+    const marginSetting = new Setting(contentEl)
+      .setName("页边距")
+      .setDesc(`${this.draft.marginMm} mm`);
+    marginSetting.addSlider((slider) => {
+      slider
+        .setLimits(0, 18, 1)
+        .setDynamicTooltip()
+        .setValue(this.draft.marginMm)
+        .onChange((value) => {
+          this.draft.marginMm = value;
+          marginSetting.setDesc(`${value} mm`);
+        });
+    });
+
+    const scaleSetting = new Setting(contentEl)
+      .setName("内容缩放")
+      .setDesc(`${this.draft.contentScalePercent}%`);
+    scaleSetting.addSlider((slider) => {
+      slider
+        .setLimits(80, 125, 5)
+        .setDynamicTooltip()
+        .setValue(this.draft.contentScalePercent)
+        .onChange((value) => {
+          this.draft.contentScalePercent = value;
+          scaleSetting.setDesc(`${value}%`);
+        });
+    });
+
+    new Setting(contentEl)
+      .setName("图片版清晰度")
+      .setDesc("只影响图片版普通笔记 PDF；越高清文件越大。")
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("1", "标准 / 小文件")
+          .addOption("1.5", "清晰 / 推荐")
+          .addOption("2", "高清")
+          .addOption("3", "超清 / 大文件")
+          .setValue(String(this.draft.imageRasterScale))
+          .onChange((value) => {
+            this.draft.imageRasterScale = clampNumber(Number.parseFloat(value), 1, 3, DEFAULT_SETTINGS.imageRasterScale);
+          });
+      });
+
+    new Setting(contentEl)
+      .setName("包含笔记标题")
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.draft.includeTitle)
+          .onChange((value) => {
+            this.draft.includeTitle = value;
+          });
+      });
+
+    new Setting(contentEl)
+      .setName("输出文件夹")
+      .setDesc("PDF 保存到库里的这个文件夹。")
+      .addText((text) => {
+        text
+          .setPlaceholder(DEFAULT_SETTINGS.outputFolder)
+          .setValue(this.draft.outputFolder)
+          .onChange((value) => {
+            this.draft.outputFolder = value.trim() || DEFAULT_SETTINGS.outputFolder;
+          });
+      });
+
+    new Setting(contentEl)
+      .setName("导出后打开")
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.draft.openAfterExport)
+          .onChange((value) => {
+            this.draft.openAfterExport = value;
+          });
+      });
+
+    new Setting(contentEl)
+      .setName("导出后分享")
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.draft.shareAfterExport)
+          .onChange((value) => {
+            this.draft.shareAfterExport = value;
+          });
+      });
+
+    new Setting(contentEl)
+      .setName("保存为默认")
+      .setDesc("勾选后，本次选项会写入插件设置，作为下次默认值。")
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.saveAsDefault)
+          .onChange((value) => {
+            this.saveAsDefault = value;
+          });
+      });
+
+    new Setting(contentEl)
+      .setClass("mobile-pdf-exporter-options-actions")
+      .addButton((button) => {
+        button
+          .setButtonText("导出 PDF")
+          .setCta()
+          .onClick(() => {
+            void this.exportWithDraft();
+          });
+      })
+      .addButton((button) => {
+        button
+          .setButtonText("取消")
+          .onClick(() => this.close());
+      });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+
+  private async exportWithDraft(): Promise<void> {
+    if (this.exporting) return;
+    this.exporting = true;
+    const exportSettings = cloneSettings(this.draft);
+    this.close();
+
+    if (this.saveAsDefault) {
+      this.plugin.settings = cloneSettings(exportSettings);
+      await this.plugin.saveSettings();
+      await this.plugin.exportFile(this.file);
+      return;
+    }
+
+    await this.plugin.exportFile(this.file, exportSettings);
+  }
+}
+
 class MobilePdfExporterSettingTab extends PluginSettingTab {
   constructor(app: App, private plugin: MobilePdfExporterPlugin) {
     super(app, plugin);
@@ -1107,6 +1322,22 @@ function normalizeSettings(raw: unknown): MobilePdfExporterSettings {
     colorMode: normalizeChoice(saved.colorMode, PDF_COLOR_MODES, DEFAULT_SETTINGS.colorMode),
     contentScalePercent: clampNumber(saved.contentScalePercent, 80, 125, DEFAULT_SETTINGS.contentScalePercent),
     imageRasterScale: clampNumber(saved.imageRasterScale, 1, 3, DEFAULT_SETTINGS.imageRasterScale)
+  };
+}
+
+function cloneSettings(settings: MobilePdfExporterSettings): MobilePdfExporterSettings {
+  return {
+    outputFolder: settings.outputFolder,
+    marginMm: settings.marginMm,
+    includeTitle: settings.includeTitle,
+    shareAfterExport: settings.shareAfterExport,
+    openAfterExport: settings.openAfterExport,
+    noteExportMode: settings.noteExportMode,
+    pagePreset: settings.pagePreset,
+    pageOrientation: settings.pageOrientation,
+    colorMode: settings.colorMode,
+    contentScalePercent: settings.contentScalePercent,
+    imageRasterScale: settings.imageRasterScale
   };
 }
 
