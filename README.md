@@ -51,6 +51,62 @@ The release build embeds a Noto Sans SC font fallback in `main.js`, so community
 
 ## Changelog
 
+### 0.3.27
+
+- Expands Note Doodle export detection from reading preview only to any currently visible same-note doodle surface, including editor/source mode.
+- Prefer copying the current live Note Doodle canvas into the exported PDF overlay before falling back to saved stroke data.
+- Keeps hidden doodles hidden: only currently visible doodle canvases are exported.
+
+### 0.3.26
+
+- Adds an editable PDF filename field in the top export toolbar.
+- Uses the edited filename when saving the PDF, while still avoiding overwriting existing files.
+- Sanitizes invalid filename characters and falls back to the note name when the field is empty.
+
+### 0.3.25
+
+- Moves the export status UI to a compact top bar for exporting, completed, and failed states.
+- Removes the center export status panel and extra completion/failure notices.
+- Extends the sticky top action toolbar background to the modal top edge so scrolling options cannot show through a gap.
+
+### 0.3.24
+
+- Forces the "正在导出 PDF" prompt to paint before the export job starts, so the user sees feedback first.
+- Replaces the top action row with a sticky toolbar whose full background, divider, and buttons stay fixed together while options scroll.
+- Keeps the bottom duplicate export button removed.
+
+### 0.3.23
+
+- Shows the simple export prompt before work starts and removes the progress-bar UI.
+
+### 0.3.22
+
+- Shows the "正在导出 PDF" prompt first, then waits for the interface to paint before starting the export work.
+- Keeps only the top export/cancel actions in the options panel and removes the bottom duplicate action row.
+- Makes the top action row a full sticky background bar so the buttons do not float over scrolling options.
+
+### 0.3.21
+
+- Replaces the export progress bar with a simple "正在导出 PDF" waiting prompt.
+- The prompt appears as soon as export starts and closes automatically after the export finishes.
+
+### 0.3.20
+
+- Adds a visible PDF export progress panel with stage text, an animated progress bar, and elapsed-time feedback for long exports.
+- Updates packaged QR-code support text in settings to a bilingual "给我买咖啡 / Buy me a coffee" donation prompt.
+
+### 0.3.19
+
+- Uses the current visible Note Doodle screen state as the rule for PDF export.
+- Exports Note Doodle strokes only when the current opened preview for the same note is visibly showing its doodle canvas.
+- Does not read saved doodle JSON in the background, so hidden or currently not displayed doodles stay out of the PDF.
+
+### 0.3.18
+
+- Adds export/cancel buttons above the PDF options so mobile users do not need to scroll to the bottom for the common default export path.
+- Includes Note Doodle Preview saved doodle strokes in ordinary Markdown PDF export by drawing its overlay into the exported preview PDF.
+- Adds canvas capture and page-sliced canvas rendering for selectable-text and image PDF routes.
+
 ### 0.3.17
 
 - Opens a common PDF export options panel before exporting from the ribbon, command palette, file menu, or editor menu.

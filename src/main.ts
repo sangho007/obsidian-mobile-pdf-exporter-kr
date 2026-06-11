@@ -47,6 +47,10 @@ interface RenderedPreview {
   renderComponent: Component;
 }
 
+interface ExportFileOptions {
+  outputBaseName?: string;
+}
+
 interface TextFragment {
   text: string;
   left: number;
@@ -73,6 +77,14 @@ interface TextLineDraft {
 
 interface ImageFragment {
   element: HTMLImageElement;
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+interface CanvasFragment {
+  element: HTMLCanvasElement;
   left: number;
   top: number;
   right: number;
@@ -142,6 +154,7 @@ interface PreviewPdfModel {
   boxFragments: BoxFragment[];
   textFragments: TextFragment[];
   imageFragments: ImageFragment[];
+  canvasFragments: CanvasFragment[];
   linkFragments: LinkFragment[];
   svgFragments: SvgFragment[];
   decorationFragments: DecorationFragment[];
@@ -179,6 +192,33 @@ interface ExcalidrawAutomateRuntime {
 interface ExcalidrawAutomateLease {
   api: ExcalidrawAutomateRuntime;
   destroyAfterUse: boolean;
+}
+
+interface NoteDoodlePoint {
+  x: number;
+  y: number;
+  t: number;
+}
+
+interface NoteDoodleStroke {
+  brush: "pen" | "watercolor";
+  color: string;
+  width: number;
+  opacity: number;
+  count: number;
+  points: NoteDoodlePoint[];
+}
+
+interface NoteDoodleData {
+  version: number;
+  sourcePath: string;
+  strokes: NoteDoodleStroke[];
+  updatedAt: string | null;
+}
+
+interface NoteDoodleOverlaySource {
+  data: NoteDoodleData | null;
+  canvas: HTMLCanvasElement | null;
 }
 
 const DEFAULT_SETTINGS: MobilePdfExporterSettings = {
@@ -225,11 +265,15 @@ const EXCALIDRAW_MAX_SLICE_HEIGHT_PX = 8192;
 const EXCALIDRAW_MAX_SLICE_PIXELS = 16_000_000;
 const PREVIEW_IMAGE_MAX_CANVAS_PIXELS = 12_000_000;
 const FRAME_WAIT_TIMEOUT_MS = 120;
+const BUSY_PROMPT_PAINT_WAIT_MS = 260;
 const PAGE_BREAK_PADDING_PX = 8;
 const PAGE_BREAK_MIN_ADVANCE_PX = 72;
+const NOTE_DOODLE_MAX_PEN_COUNT = 5;
+const NOTE_DOODLE_DEFAULT_OPACITY = 1;
+const NOTE_DOODLE_WATERCOLOR = "watercolor";
 const SETTINGS_EXTRA_CODE_ASSETS = [
-  { path: "extras/code-1.jpg", label: "二维码 1" },
-  { path: "extras/code-2.png", label: "二维码 2" }
+  { path: "extras/code-1.jpg", label: "给我买咖啡 / Buy me a coffee" },
+  { path: "extras/code-2.png", label: "支持继续维护 / Support this tool" }
 ] as const;
 type RegisteredFontkit = Parameters<PDFDocument["registerFontkit"]>[0];
 type FontkitModuleShape = Partial<RegisteredFontkit> & { default?: Partial<RegisteredFontkit> };
@@ -303,13 +347,14 @@ export default class MobilePdfExporterPlugin extends Plugin {
     new MobilePdfExportOptionsModal(this.app, this, file).open();
   }
 
-  async exportFile(file: TFile, exportSettings?: MobilePdfExporterSettings): Promise<void> {
+  async exportFile(file: TFile, exportSettings?: MobilePdfExporterSettings, options: ExportFileOptions = {}): Promise<void> {
     const previousSettings = this.settings;
     if (exportSettings) this.settings = cloneSettings(exportSettings);
-    const notice = new Notice("正在导出 PDF...", 0);
+    const exportingPrompt = new PdfExportBusyPrompt(file.basename);
     let rendered: RenderedPreview | null = null;
 
     try {
+      await exportingPrompt.waitUntilPainted();
       cleanupRenderRoots();
       const markdown = await this.app.vault.cachedRead(file);
       let pdfBlob: Blob;
@@ -323,11 +368,8 @@ export default class MobilePdfExporterPlugin extends Plugin {
       }
 
       await this.ensureFolderExists(this.settings.outputFolder);
-      const outputPath = await this.getAvailableOutputPath(file, this.settings.outputFolder);
+      const outputPath = await this.getAvailableOutputPath(file, this.settings.outputFolder, options.outputBaseName);
       await this.app.vault.adapter.writeBinary(outputPath, await pdfBlob.arrayBuffer());
-
-      notice.hide();
-      new Notice(`PDF 已导出：${outputPath}`, 6000);
 
       if (this.settings.openAfterExport) {
         await this.app.workspace.openLinkText(outputPath, file.path, true);
@@ -336,16 +378,17 @@ export default class MobilePdfExporterPlugin extends Plugin {
       if (this.settings.shareAfterExport) {
         await this.sharePdfIfAvailable(pdfBlob, outputPath);
       }
+      exportingPrompt.done();
     } catch (error) {
-      notice.hide();
       const message = error instanceof Error ? error.message : String(error);
       console.error("Mobile PDF Exporter failed", error);
-      new Notice(`PDF 导出失败：${message}`, 8000);
+      exportingPrompt.fail(message);
     } finally {
       if (rendered) {
         rendered.renderComponent.unload();
         rendered.rootEl.remove();
       }
+      exportingPrompt.closeSoon();
       this.settings = previousSettings;
     }
   }
@@ -548,6 +591,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
       await waitForPreviewDomStable(pageEl, 8000);
       await waitForImages(pageEl, IMAGE_WAIT_TIMEOUT_MS);
       await waitForPreviewDomStable(pageEl, 1800);
+      await this.injectNoteDoodleOverlay(file, markdownEl);
       tightenSeparatorTextNodes(pageEl);
       await nextAnimationFrame(FRAME_WAIT_TIMEOUT_MS);
       await nextAnimationFrame(FRAME_WAIT_TIMEOUT_MS);
@@ -628,10 +672,53 @@ export default class MobilePdfExporterPlugin extends Plugin {
     return null;
   }
 
+  private injectNoteDoodleOverlay(file: TFile, markdownEl: HTMLElement): void {
+    const overlay = getVisibleLiveNoteDoodleOverlay(file);
+    if (!overlay?.canvas && !overlay?.data?.strokes.length) return;
+
+    const rect = markdownEl.getBoundingClientRect();
+    const width = Math.max(1, Math.ceil(markdownEl.scrollWidth || rect.width || 1));
+    const height = Math.max(1, Math.ceil(markdownEl.scrollHeight || rect.height || 1));
+    const maxPixelScale = Math.sqrt(PREVIEW_IMAGE_MAX_CANVAS_PIXELS / Math.max(1, width * height));
+    const ratio = clampNumber(Math.min(window.devicePixelRatio || 1, maxPixelScale), 0.5, 2, 1);
+    const previousPosition = getComputedStyle(markdownEl).position;
+    if (previousPosition === "static") markdownEl.style.position = "relative";
+
+    markdownEl.addClass("mobile-pdf-exporter-note-doodle-host");
+    const canvas = appendElement(markdownEl, "canvas", {
+      cls: "mobile-pdf-exporter-note-doodle-canvas note-doodle-canvas"
+    });
+    canvas.width = Math.max(1, Math.ceil(width * ratio));
+    canvas.height = Math.max(1, Math.ceil(height * ratio));
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    canvas.style.position = "absolute";
+    canvas.style.left = "0";
+    canvas.style.top = "0";
+    canvas.style.pointerEvents = "none";
+    canvas.style.zIndex = "60";
+    canvas.setAttribute("aria-hidden", "true");
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      canvas.remove();
+      return;
+    }
+
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    if (overlay.canvas && drawLiveNoteDoodleCanvas(context, overlay.canvas, width, height)) return;
+    if (overlay.data?.strokes.length) drawNoteDoodleStrokes(context, overlay.data.strokes, width, height);
+  }
+
   private async renderPreviewToSelectablePdf(file: TFile, pageEl: HTMLElement): Promise<Blob> {
     const model = this.capturePreviewPdfModel(pageEl);
 
-    if (model.textFragments.length === 0 && model.imageFragments.length === 0 && model.svgFragments.length === 0) {
+    if (
+      model.textFragments.length === 0 &&
+      model.imageFragments.length === 0 &&
+      model.canvasFragments.length === 0 &&
+      model.svgFragments.length === 0
+    ) {
       throw new Error("预览没有可导出的内容。");
     }
 
@@ -701,6 +788,15 @@ export default class MobilePdfExporterPlugin extends Plugin {
         colorMode: this.settings.colorMode
       });
 
+      await drawCanvasLayer(pdfDoc, pdfPage, model.canvasFragments, {
+        pageTopPx,
+        pageBottomPx,
+        pageWidthPt: model.pageWidthPt,
+        pageHeightPt: model.pageHeightPt,
+        pxToPt: model.pxToPt,
+        colorMode: this.settings.colorMode
+      });
+
       drawLinkAnnotationLayer(pdfPage, model.linkFragments, {
         pageTopPx,
         pageBottomPx,
@@ -719,7 +815,12 @@ export default class MobilePdfExporterPlugin extends Plugin {
   private async renderPreviewToImagePdf(file: TFile, pageEl: HTMLElement): Promise<Blob> {
     const model = this.capturePreviewPdfModel(pageEl);
 
-    if (model.textFragments.length === 0 && model.imageFragments.length === 0 && model.svgFragments.length === 0) {
+    if (
+      model.textFragments.length === 0 &&
+      model.imageFragments.length === 0 &&
+      model.canvasFragments.length === 0 &&
+      model.svgFragments.length === 0
+    ) {
       throw new Error("预览没有可导出的内容。");
     }
 
@@ -766,6 +867,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
     const boxFragments = captureBoxFragments(pageEl);
     const textFragments = captureTextFragments(pageEl);
     const imageFragments = captureImageFragments(pageEl);
+    const canvasFragments = captureCanvasFragments(pageEl);
     const linkFragments = captureLinkFragments(pageEl);
     const svgFragments = captureSvgFragments(pageEl);
     const decorationFragments = captureDecorationFragments(pageEl);
@@ -773,6 +875,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
       pageEl,
       textFragments,
       imageFragments,
+      canvasFragments,
       boxFragments,
       svgFragments,
       decorationFragments
@@ -781,6 +884,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
       pageEl,
       textFragments,
       imageFragments,
+      canvasFragments,
       boxFragments,
       svgFragments,
       decorationFragments,
@@ -798,6 +902,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
       boxFragments,
       textFragments,
       imageFragments,
+      canvasFragments,
       linkFragments,
       svgFragments,
       decorationFragments,
@@ -828,7 +933,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
     return this.app.vault.adapter.getResourcePath(assetPath);
   }
 
-  private async getAvailableOutputPath(file: TFile, outputFolder: string): Promise<string> {
+  private async getAvailableOutputPath(file: TFile, outputFolder: string, requestedBaseName?: string): Promise<string> {
     const folder = normalizeOutputFolder(outputFolder);
     const date = new Date();
     const stamp = [
@@ -836,7 +941,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
       String(date.getMonth() + 1).padStart(2, "0"),
       String(date.getDate()).padStart(2, "0")
     ].join("-");
-    const baseName = sanitizeFileName(`${file.basename}-preview-${stamp}`);
+    const baseName = sanitizePdfBaseName(requestedBaseName) || sanitizeFileName(`${file.basename}-preview-${stamp}`);
 
     for (let index = 0; index < 1000; index += 1) {
       const suffix = index === 0 ? "" : `-${index + 1}`;
@@ -887,6 +992,7 @@ class MobilePdfExportOptionsModal extends Modal {
   private draft: MobilePdfExporterSettings;
   private saveAsDefault = false;
   private exporting = false;
+  private outputBaseName: string;
 
   constructor(
     app: App,
@@ -895,12 +1001,15 @@ class MobilePdfExportOptionsModal extends Modal {
   ) {
     super(app);
     this.draft = cloneSettings(plugin.settings);
+    this.outputBaseName = defaultPdfBaseName(file);
   }
 
   onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("mobile-pdf-exporter-options-modal");
+
+    this.addActionToolbar(contentEl);
 
     appendElement(contentEl, "h2", { text: "PDF 导出选项" });
     appendElement(contentEl, "p", {
@@ -1052,21 +1161,6 @@ class MobilePdfExportOptionsModal extends Modal {
           });
       });
 
-    new Setting(contentEl)
-      .setClass("mobile-pdf-exporter-options-actions")
-      .addButton((button) => {
-        button
-          .setButtonText("导出 PDF")
-          .setCta()
-          .onClick(() => {
-            void this.exportWithDraft();
-          });
-      })
-      .addButton((button) => {
-        button
-          .setButtonText("取消")
-          .onClick(() => this.close());
-      });
   }
 
   onClose(): void {
@@ -1077,16 +1171,149 @@ class MobilePdfExportOptionsModal extends Modal {
     if (this.exporting) return;
     this.exporting = true;
     const exportSettings = cloneSettings(this.draft);
+    const outputBaseName = sanitizePdfBaseName(this.outputBaseName) || defaultPdfBaseName(this.file);
     this.close();
 
     if (this.saveAsDefault) {
       this.plugin.settings = cloneSettings(exportSettings);
       await this.plugin.saveSettings();
-      await this.plugin.exportFile(this.file);
+      await this.plugin.exportFile(this.file, undefined, { outputBaseName });
       return;
     }
 
-    await this.plugin.exportFile(this.file, exportSettings);
+    await this.plugin.exportFile(this.file, exportSettings, { outputBaseName });
+  }
+
+  private addActionToolbar(parent: HTMLElement): void {
+    const toolbarEl = appendElement(parent, "div", {
+      cls: "mobile-pdf-exporter-options-toolbar"
+    });
+    const innerEl = appendElement(toolbarEl, "div", {
+      cls: "mobile-pdf-exporter-options-toolbar-inner"
+    });
+
+    const nameWrapEl = appendElement(innerEl, "label", {
+      cls: "mobile-pdf-exporter-options-name"
+    });
+    appendElement(nameWrapEl, "span", {
+      cls: "mobile-pdf-exporter-options-name-label",
+      text: "PDF 名称"
+    });
+    const nameInput = appendElement(nameWrapEl, "input", {
+      cls: "mobile-pdf-exporter-options-name-input"
+    });
+    nameInput.type = "text";
+    nameInput.value = this.outputBaseName;
+    nameInput.placeholder = defaultPdfBaseName(this.file);
+    nameInput.enterKeyHint = "done";
+    nameInput.addEventListener("input", () => {
+      this.outputBaseName = nameInput.value;
+    });
+    nameInput.addEventListener("blur", () => {
+      const normalized = sanitizePdfBaseName(nameInput.value) || defaultPdfBaseName(this.file);
+      this.outputBaseName = normalized;
+      nameInput.value = normalized;
+    });
+
+    const exportButton = appendElement(innerEl, "button", {
+      cls: "mod-cta mobile-pdf-exporter-options-button",
+      text: "导出 PDF"
+    });
+    exportButton.type = "button";
+    exportButton.addEventListener("click", () => {
+      exportButton.disabled = true;
+      void this.exportWithDraft().catch(() => {
+        exportButton.disabled = false;
+      });
+    });
+
+    const cancelButton = appendElement(innerEl, "button", {
+      cls: "mobile-pdf-exporter-options-button",
+      text: "取消"
+    });
+    cancelButton.type = "button";
+    cancelButton.addEventListener("click", () => this.close());
+  }
+}
+
+class PdfExportBusyPrompt {
+  private readonly rootEl: HTMLElement;
+  private readonly titleEl: HTMLElement;
+  private readonly elapsedEl: HTMLElement;
+  private readonly startedAt = Date.now();
+  private readonly timer: number;
+  private closeTimer = 0;
+  private closed = false;
+  private failed = false;
+
+  constructor(noteName: string) {
+    this.rootEl = appendElement(document.body, "div", {
+      cls: "mobile-pdf-exporter-busy"
+    });
+    this.titleEl = appendElement(this.rootEl, "div", {
+      cls: "mobile-pdf-exporter-busy-title",
+      text: "正在导出 PDF"
+    });
+    appendElement(this.rootEl, "div", {
+      cls: "mobile-pdf-exporter-busy-file",
+      text: noteName
+    });
+    this.elapsedEl = appendElement(this.rootEl, "div", {
+      cls: "mobile-pdf-exporter-busy-elapsed",
+      text: "已用 0 秒"
+    });
+    this.timer = window.setInterval(() => this.updateElapsed(), 1000);
+  }
+
+  async waitUntilPainted(): Promise<void> {
+    if (this.closed) return;
+    this.rootEl.style.display = "flex";
+    this.rootEl.addClass("is-visible");
+    this.rootEl.getBoundingClientRect();
+    this.updateElapsed();
+    await nextAnimationFrame(FRAME_WAIT_TIMEOUT_MS);
+    await nextAnimationFrame(FRAME_WAIT_TIMEOUT_MS);
+    await delay(BUSY_PROMPT_PAINT_WAIT_MS);
+    await nextAnimationFrame(FRAME_WAIT_TIMEOUT_MS);
+  }
+
+  done(): void {
+    if (this.closed) return;
+    this.rootEl.addClass("is-complete");
+    this.titleEl.textContent = "PDF 导出完成";
+    this.updateElapsed();
+  }
+
+  fail(message: string): void {
+    if (this.closed) return;
+    this.failed = true;
+    this.rootEl.addClass("is-error");
+    this.titleEl.textContent = "PDF 导出失败";
+    this.elapsedEl.textContent = message;
+    this.updateElapsed();
+  }
+
+  closeSoon(): void {
+    if (this.closed || this.closeTimer) return;
+    this.closeTimer = window.setTimeout(() => this.close(), this.failed ? 5200 : 1400);
+  }
+
+  private updateElapsed(): void {
+    if (this.failed) return;
+    const seconds = Math.max(0, Math.round((Date.now() - this.startedAt) / 1000));
+    this.elapsedEl.textContent = this.rootEl.classList.contains("is-complete")
+      ? "已完成，正在关闭提示。"
+      : seconds >= 8
+      ? `已用 ${seconds} 秒，仍在处理，请不要关闭 Obsidian。`
+      : `已用 ${seconds} 秒`;
+  }
+
+  private close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    window.clearInterval(this.timer);
+    if (this.closeTimer) window.clearTimeout(this.closeTimer);
+    this.rootEl.remove();
   }
 }
 
@@ -1100,7 +1327,7 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
     containerEl.replaceChildren();
     appendElement(containerEl, "h2", { text: "Mobile PDF Exporter" });
     appendElement(containerEl, "p", {
-      text: "菜单和按钮会直接导出当前笔记 PDF；普通 Markdown 笔记可选择可复制文字版或图片版。"
+      text: "菜单和按钮会先打开 PDF 导出选项；普通 Markdown 笔记可选择可复制文字版或图片版。"
     });
 
     appendElement(containerEl, "h3", { text: "普通笔记 PDF 选项" });
@@ -1277,7 +1504,11 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
 
     appendElement(containerEl, "div", {
       cls: "mobile-pdf-exporter-settings-codes-title",
-      text: "二维码"
+      text: "给我买咖啡 / Buy me a coffee"
+    });
+    appendElement(containerEl, "div", {
+      cls: "mobile-pdf-exporter-settings-codes-subtitle",
+      text: "如果这个插件帮到你，可以扫码打赏支持继续维护 / If this tool helps, tips are appreciated."
     });
 
     const gridEl = appendElement(containerEl, "div", {
@@ -1374,8 +1605,127 @@ function normalizeOutputFolder(folder: string): string {
   return normalizePath((folder.trim() || DEFAULT_SETTINGS.outputFolder).replace(/^\/+|\/+$/g, ""));
 }
 
+function getVisibleLiveNoteDoodleOverlay(file: TFile): NoteDoodleOverlaySource | null {
+  const candidates: NoteDoodleOverlaySource[] = [];
+
+  for (const surface of Array.from(document.querySelectorAll<HTMLElement>(".note-doodle-shell"))) {
+    if (surface.closest(".mobile-pdf-exporter-render-root")) continue;
+    const controller = (surface as unknown as {
+      _noteDoodleController?: {
+        file?: TFile;
+        doodleData?: unknown;
+        canvas?: HTMLCanvasElement | null;
+      };
+    })._noteDoodleController;
+    if (controller?.file?.path !== file.path) continue;
+    if (!isVisibleNoteDoodleSurface(surface)) continue;
+
+    const canvas = controller.canvas instanceof HTMLCanvasElement
+      ? controller.canvas
+      : surface.querySelector<HTMLCanvasElement>(".note-doodle-canvas");
+    if (!canvas || !isVisibleNoteDoodleCanvas(canvas)) continue;
+
+    const data = normalizeNoteDoodleData(controller.doodleData, file);
+    if (data || canvas) candidates.push({ data, canvas });
+  }
+
+  return candidates[0] ?? null;
+}
+
+function isVisibleNoteDoodleSurface(surface: HTMLElement): boolean {
+  if (!surface.isConnected || surface.classList.contains("is-doodle-hidden")) return false;
+  return isScreenVisibleElement(surface);
+}
+
+function isVisibleNoteDoodleCanvas(canvas: HTMLCanvasElement): boolean {
+  if (canvas.width < 1 || canvas.height < 1) return false;
+  return isScreenVisibleElement(canvas);
+}
+
+function isScreenVisibleElement(element: HTMLElement): boolean {
+  const rect = element.getBoundingClientRect();
+  if (rect.width < 1 || rect.height < 1) return false;
+
+  let current: HTMLElement | null = element;
+  while (current) {
+    const style = getComputedStyle(current);
+    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+    current = current.parentElement;
+  }
+
+  return true;
+}
+
+function normalizeNoteDoodleData(data: unknown, file: TFile): NoteDoodleData | null {
+  const candidate = data && typeof data === "object" ? data as {
+    version?: unknown;
+    strokes?: unknown;
+    updatedAt?: unknown;
+  } : null;
+  const rawStrokes = Array.isArray(candidate?.strokes) ? candidate.strokes : [];
+  const strokes = rawStrokes
+    .map(normalizeNoteDoodleStroke)
+    .filter((stroke): stroke is NoteDoodleStroke => Boolean(stroke && stroke.points.length));
+
+  if (!strokes.length) return null;
+
+  return {
+    version: Number.isFinite(Number(candidate?.version)) ? Number(candidate?.version) : 1,
+    sourcePath: file.path,
+    strokes,
+    updatedAt: typeof candidate?.updatedAt === "string" ? candidate.updatedAt : null
+  };
+}
+
+function normalizeNoteDoodleStroke(stroke: unknown): NoteDoodleStroke | null {
+  const candidate = stroke && typeof stroke === "object" ? stroke as {
+    brush?: unknown;
+    color?: unknown;
+    width?: unknown;
+    opacity?: unknown;
+    count?: unknown;
+    points?: unknown;
+  } : null;
+  const points = Array.isArray(candidate?.points) ? candidate.points : [];
+  const normalizedPoints = points
+    .map(normalizeNoteDoodlePoint)
+    .filter((point): point is NoteDoodlePoint => Boolean(point));
+
+  if (!normalizedPoints.length) return null;
+
+  return {
+    brush: candidate?.brush === NOTE_DOODLE_WATERCOLOR ? "watercolor" : "pen",
+    color: typeof candidate?.color === "string" ? candidate.color : "#e53935",
+    width: clampNumber(Number(candidate?.width), 0.5, 48, 3),
+    opacity: clampNumber(Number(candidate?.opacity ?? NOTE_DOODLE_DEFAULT_OPACITY), 0.08, 1, NOTE_DOODLE_DEFAULT_OPACITY),
+    count: Math.round(clampNumber(Number(candidate?.count ?? 1), 1, NOTE_DOODLE_MAX_PEN_COUNT, 1)),
+    points: normalizedPoints
+  };
+}
+
+function normalizeNoteDoodlePoint(point: unknown): NoteDoodlePoint | null {
+  const candidate = point && typeof point === "object" ? point as { x?: unknown; y?: unknown; t?: unknown } : null;
+  const x = Number(candidate?.x);
+  const y = Number(candidate?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return {
+    x: clampNumber(x, 0, 1, 0),
+    y: clampNumber(y, 0, 1, 0),
+    t: Number.isFinite(Number(candidate?.t)) ? Number(candidate?.t) : Date.now()
+  };
+}
+
 function sanitizeFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|#^[\]]/g, "-").replace(/\s+/g, " ").trim() || "export";
+}
+
+function sanitizePdfBaseName(name: unknown): string {
+  if (typeof name !== "string") return "";
+  return sanitizeFileName(name.replace(/\.pdf$/i, "")).slice(0, 120);
+}
+
+function defaultPdfBaseName(file: TFile): string {
+  return sanitizePdfBaseName(file.basename) || "export";
 }
 
 function mmToPx(mm: number): number {
@@ -1553,6 +1903,23 @@ function captureImageFragments(pageEl: HTMLElement): ImageFragment[] {
       const rect = image.getBoundingClientRect();
       return {
         element: image,
+        left: rect.left - pageRect.left,
+        top: rect.top - pageRect.top,
+        right: rect.right - pageRect.left,
+        bottom: rect.bottom - pageRect.top
+      };
+    })
+    .filter((fragment) => fragment.right > fragment.left && fragment.bottom > fragment.top);
+}
+
+function captureCanvasFragments(pageEl: HTMLElement): CanvasFragment[] {
+  const pageRect = pageEl.getBoundingClientRect();
+  return Array.from(pageEl.querySelectorAll("canvas"))
+    .filter((canvas) => isExportableElement(canvas) && canvas.width > 0 && canvas.height > 0)
+    .map((canvas) => {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        element: canvas,
         left: rect.left - pageRect.left,
         top: rect.top - pageRect.top,
         right: rect.right - pageRect.left,
@@ -1791,6 +2158,7 @@ function captureKeepBlockFragments(
   pageEl: HTMLElement,
   textFragments: TextFragment[],
   imageFragments: ImageFragment[],
+  canvasFragments: CanvasFragment[],
   boxFragments: BoxFragment[],
   svgFragments: SvgFragment[],
   decorationFragments: DecorationFragment[]
@@ -1832,6 +2200,11 @@ function captureKeepBlockFragments(
     .filter((block) => block.right > block.left && block.bottom > block.top);
 
   for (const image of imageFragments) blocks.push({ ...image, priority: 6 });
+  for (const canvas of canvasFragments) {
+    if (!canvas.element.classList.contains("mobile-pdf-exporter-note-doodle-canvas")) {
+      blocks.push({ ...canvas, priority: 4 });
+    }
+  }
   for (const box of boxFragments) blocks.push({ ...box, priority: 3 });
   for (const svg of svgFragments) blocks.push({ ...svg, priority: isLargeOrExcalidrawSvg(svg.element) ? 6 : 3 });
   for (const decoration of decorationFragments) blocks.push({ ...decoration, priority: 2 });
@@ -2288,6 +2661,7 @@ function measureExportContentHeight(
   pageEl: HTMLElement,
   textFragments: TextFragment[],
   imageFragments: ImageFragment[],
+  canvasFragments: CanvasFragment[],
   boxFragments: BoxFragment[],
   svgFragments: SvgFragment[],
   decorationFragments: DecorationFragment[],
@@ -2295,6 +2669,7 @@ function measureExportContentHeight(
 ): number {
   const maxTextBottom = Math.max(0, ...textFragments.map((fragment) => fragment.bottom));
   const maxImageBottom = Math.max(0, ...imageFragments.map((fragment) => fragment.bottom));
+  const maxCanvasBottom = Math.max(0, ...canvasFragments.map((fragment) => fragment.bottom));
   const maxBoxBottom = Math.max(0, ...boxFragments.map((fragment) => fragment.bottom));
   const maxSvgBottom = Math.max(0, ...svgFragments.map((fragment) => fragment.bottom));
   const maxDecorationBottom = Math.max(0, ...decorationFragments.map((fragment) => fragment.bottom));
@@ -2302,6 +2677,7 @@ function measureExportContentHeight(
   const visibleBottom = Math.max(
     maxTextBottom,
     maxImageBottom,
+    maxCanvasBottom,
     maxBoxBottom,
     maxSvgBottom,
     maxDecorationBottom,
@@ -2631,6 +3007,51 @@ async function drawImageLayer(
   }
 }
 
+async function drawCanvasLayer(
+  pdfDoc: PDFDocument,
+  page: PDFPage,
+  canvases: CanvasFragment[],
+  options: {
+    pageTopPx: number;
+    pageBottomPx: number;
+    pageWidthPt: number;
+    pageHeightPt: number;
+    pxToPt: number;
+    colorMode: PdfColorMode;
+  }
+): Promise<void> {
+  for (const canvasFragment of canvases) {
+    const visibleTop = Math.max(canvasFragment.top, options.pageTopPx);
+    const visibleBottom = Math.min(canvasFragment.bottom, options.pageBottomPx);
+    if (visibleBottom <= visibleTop) continue;
+
+    const cssWidth = Math.max(1, canvasFragment.right - canvasFragment.left);
+    const cssSliceTop = visibleTop - canvasFragment.top;
+    const cssSliceHeight = Math.max(1, visibleBottom - visibleTop);
+    const imageBytes = canvasElementSliceToPngBytes(
+      canvasFragment.element,
+      0,
+      cssSliceTop,
+      cssWidth,
+      cssSliceHeight,
+      options.colorMode
+    );
+    if (!imageBytes) continue;
+
+    try {
+      const embeddedImage = await pdfDoc.embedPng(imageBytes);
+      const sourceX = clampNumber(canvasFragment.left * options.pxToPt, 0, options.pageWidthPt - 4, 0);
+      const localTopPt = Math.max(0, (visibleTop - options.pageTopPx) * options.pxToPt);
+      const width = Math.max(1, Math.min(cssWidth * options.pxToPt, options.pageWidthPt - sourceX));
+      const height = Math.max(1, Math.min(cssSliceHeight * options.pxToPt, options.pageHeightPt - localTopPt));
+      const y = options.pageHeightPt - localTopPt - height;
+      page.drawImage(embeddedImage, { x: sourceX, y, width, height });
+    } catch (error) {
+      console.warn("Mobile PDF Exporter canvas layer draw failed", error);
+    }
+  }
+}
+
 function shouldDrawMediaOnPage(
   fragment: { top: number; bottom: number },
   pageTopPx: number,
@@ -2884,6 +3305,12 @@ async function renderPreviewPageToPngBytes(
     sourceWidthPx: model.sourceWidthPx,
     colorMode: "color"
   });
+  drawCanvasBitmapLayer(context, model.canvasFragments, {
+    pageTopPx,
+    pageBottomPx,
+    sourceWidthPx: model.sourceWidthPx,
+    pageHeightPx: model.pageHeightPx
+  });
 
   if (options.colorMode === "grayscale") {
     context.setTransform(1, 0, 0, 1, 0, 0);
@@ -3003,6 +3430,54 @@ async function drawCanvasSvgLayer(
       context.drawImage(image, x, y, width, height);
     } catch (error) {
       console.warn("Mobile PDF Exporter canvas SVG draw failed", error);
+    }
+  }
+}
+
+function drawCanvasBitmapLayer(
+  context: CanvasRenderingContext2D,
+  canvases: CanvasFragment[],
+  options: {
+    pageTopPx: number;
+    pageBottomPx: number;
+    sourceWidthPx: number;
+    pageHeightPx: number;
+  }
+): void {
+  for (const canvasFragment of canvases) {
+    const visibleTop = Math.max(canvasFragment.top, options.pageTopPx);
+    const visibleBottom = Math.min(canvasFragment.bottom, options.pageBottomPx);
+    if (visibleBottom <= visibleTop) continue;
+
+    const cssWidth = Math.max(1, canvasFragment.right - canvasFragment.left);
+    const cssHeight = Math.max(1, canvasFragment.bottom - canvasFragment.top);
+    const ratioX = canvasFragment.element.width / cssWidth;
+    const ratioY = canvasFragment.element.height / cssHeight;
+    const cssSliceTop = visibleTop - canvasFragment.top;
+    const cssSliceHeight = visibleBottom - visibleTop;
+    const sourceX = 0;
+    const sourceY = Math.max(0, Math.floor(cssSliceTop * ratioY));
+    const sourceWidth = Math.max(1, Math.min(canvasFragment.element.width, Math.ceil(cssWidth * ratioX)));
+    const sourceHeight = Math.max(1, Math.min(canvasFragment.element.height - sourceY, Math.ceil(cssSliceHeight * ratioY)));
+    const x = clampNumber(canvasFragment.left, 0, options.sourceWidthPx - 4, 0);
+    const y = Math.max(0, visibleTop - options.pageTopPx);
+    const width = Math.max(1, Math.min(cssWidth, options.sourceWidthPx - x));
+    const height = Math.max(1, Math.min(cssSliceHeight, options.pageHeightPx - y));
+
+    try {
+      context.drawImage(
+        canvasFragment.element,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        x,
+        y,
+        width,
+        height
+      );
+    } catch (error) {
+      console.warn("Mobile PDF Exporter canvas bitmap draw failed", error);
     }
   }
 }
@@ -3266,6 +3741,173 @@ async function imageSliceToPngBytes(
   context.drawImage(image, 0, cropY, sourceWidth, cropHeight, 0, 0, targetWidth, targetHeight);
   if (colorMode === "grayscale") applyCanvasGrayscale(context, canvas.width, canvas.height);
   return dataUrlToUint8Array(canvas.toDataURL("image/png"));
+}
+
+function canvasElementSliceToPngBytes(
+  sourceCanvas: HTMLCanvasElement,
+  sourceXCss: number,
+  sourceYCss: number,
+  sourceWidthCss: number,
+  sourceHeightCss: number,
+  colorMode: PdfColorMode = "color"
+): Uint8Array | null {
+  const rect = sourceCanvas.getBoundingClientRect();
+  const cssWidth = Math.max(1, rect.width || sourceCanvas.clientWidth || sourceCanvas.width);
+  const cssHeight = Math.max(1, rect.height || sourceCanvas.clientHeight || sourceCanvas.height);
+  const ratioX = sourceCanvas.width / cssWidth;
+  const ratioY = sourceCanvas.height / cssHeight;
+  const cropX = Math.max(0, Math.min(Math.floor(sourceXCss * ratioX), sourceCanvas.width - 1));
+  const cropY = Math.max(0, Math.min(Math.floor(sourceYCss * ratioY), sourceCanvas.height - 1));
+  const cropWidth = Math.max(1, Math.min(Math.ceil(sourceWidthCss * ratioX), sourceCanvas.width - cropX));
+  const cropHeight = Math.max(1, Math.min(Math.ceil(sourceHeightCss * ratioY), sourceCanvas.height - cropY));
+  const maxPixelScale = Math.sqrt(PREVIEW_IMAGE_MAX_CANVAS_PIXELS / Math.max(1, cropWidth * cropHeight));
+  const scale = Math.min(1, maxPixelScale);
+  const targetWidth = Math.max(1, Math.floor(cropWidth * scale));
+  const targetHeight = Math.max(1, Math.floor(cropHeight * scale));
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = scale < 1 ? "high" : "medium";
+  try {
+    context.drawImage(sourceCanvas, cropX, cropY, cropWidth, cropHeight, 0, 0, targetWidth, targetHeight);
+  } catch (error) {
+    console.warn("Mobile PDF Exporter canvas slice failed", error);
+    return null;
+  }
+  if (colorMode === "grayscale") applyCanvasGrayscale(context, canvas.width, canvas.height);
+  return dataUrlToUint8Array(canvas.toDataURL("image/png"));
+}
+
+function drawLiveNoteDoodleCanvas(
+  context: CanvasRenderingContext2D,
+  sourceCanvas: HTMLCanvasElement,
+  width: number,
+  height: number
+): boolean {
+  if (sourceCanvas.width < 1 || sourceCanvas.height < 1) return false;
+
+  try {
+    context.save();
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(sourceCanvas, 0, 0, sourceCanvas.width, sourceCanvas.height, 0, 0, width, height);
+    context.restore();
+    return true;
+  } catch (error) {
+    context.restore();
+    console.warn("Mobile PDF Exporter live doodle canvas draw failed", error);
+    return false;
+  }
+}
+
+function drawNoteDoodleStrokes(
+  context: CanvasRenderingContext2D,
+  strokes: NoteDoodleStroke[],
+  width: number,
+  height: number
+): void {
+  for (const stroke of strokes) {
+    if (stroke.brush === NOTE_DOODLE_WATERCOLOR) {
+      drawNoteDoodleWatercolorStroke(context, stroke, width, height);
+    } else {
+      drawNoteDoodlePenStroke(context, stroke, width, height);
+    }
+  }
+}
+
+function drawNoteDoodlePenStroke(
+  context: CanvasRenderingContext2D,
+  stroke: NoteDoodleStroke,
+  width: number,
+  height: number
+): void {
+  if (!stroke.points.length) return;
+  const offsets = getNoteDoodlePenOffsets(stroke.count, stroke.width);
+
+  context.save();
+  context.globalAlpha = stroke.opacity;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.strokeStyle = stroke.color;
+  context.lineWidth = stroke.width;
+
+  for (const offset of offsets) {
+    context.beginPath();
+    const first = noteDoodlePointToCanvas(stroke.points[0], width, height);
+    context.moveTo(first.x + offset.x, first.y + offset.y);
+
+    for (const point of stroke.points.slice(1)) {
+      const next = noteDoodlePointToCanvas(point, width, height);
+      context.lineTo(next.x + offset.x, next.y + offset.y);
+    }
+
+    context.stroke();
+  }
+
+  context.restore();
+}
+
+function drawNoteDoodleWatercolorStroke(
+  context: CanvasRenderingContext2D,
+  stroke: NoteDoodleStroke,
+  width: number,
+  height: number
+): void {
+  if (!stroke.points.length) return;
+  const strokeWidth = Math.max(2, stroke.width);
+  const opacity = clampNumber(stroke.opacity || 0.34, 0.08, 1, 0.34);
+  const offsets = getNoteDoodlePenOffsets(Math.max(2, stroke.count + 1), strokeWidth * 0.85);
+
+  context.save();
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.strokeStyle = stroke.color;
+
+  for (const [layerIndex, offset] of offsets.entries()) {
+    context.globalAlpha = opacity * (layerIndex === 0 ? 0.46 : 0.22);
+    context.lineWidth = strokeWidth * (layerIndex === 0 ? 2.15 : 1.55);
+    context.beginPath();
+    const first = noteDoodlePointToCanvas(stroke.points[0], width, height);
+    context.moveTo(first.x + offset.x, first.y + offset.y);
+
+    for (const point of stroke.points.slice(1)) {
+      const next = noteDoodlePointToCanvas(point, width, height);
+      context.lineTo(next.x + offset.x, next.y + offset.y);
+    }
+
+    context.stroke();
+  }
+
+  context.restore();
+}
+
+function noteDoodlePointToCanvas(point: NoteDoodlePoint, width: number, height: number): { x: number; y: number } {
+  return {
+    x: point.x * width,
+    y: point.y * height
+  };
+}
+
+function getNoteDoodlePenOffsets(count: number, width: number): Array<{ x: number; y: number }> {
+  const safeCount = Math.round(clampNumber(count, 1, NOTE_DOODLE_MAX_PEN_COUNT, 1));
+  if (safeCount <= 1) return [{ x: 0, y: 0 }];
+
+  const radius = Math.max(2, Number(width || 3) * 1.15);
+  const offsets = [{ x: 0, y: 0 }];
+
+  for (let index = 1; index < safeCount; index += 1) {
+    const angle = ((index - 1) / Math.max(1, safeCount - 1)) * Math.PI * 2;
+    offsets.push({
+      x: Math.cos(angle) * radius,
+      y: Math.sin(angle) * radius
+    });
+  }
+
+  return offsets;
 }
 
 function getExcalidrawExportScaleCandidates(preferredScale: number): number[] {
@@ -3603,4 +4245,8 @@ async function nextAnimationFrame(timeoutMs = FRAME_WAIT_TIMEOUT_MS): Promise<vo
     frame = requestAnimationFrame(finish);
     timeout = window.setTimeout(finish, timeoutMs);
   });
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 }
