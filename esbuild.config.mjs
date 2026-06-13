@@ -1,9 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
+import { builtinModules } from "node:module";
 import process from "node:process";
-import builtins from "builtin-modules";
 import esbuild from "esbuild";
 
 const prod = process.argv[2] === "production";
+const builtins = Array.from(new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]));
 
 const context = await esbuild.context({
   banner: {

@@ -153,6 +153,7 @@ interface PdfPageSizeMm {
 }
 
 interface PreviewPdfModel {
+  ownerDocument: Document;
   pageWidthPt: number;
   pageHeightPt: number;
   sourceWidthPx: number;
@@ -810,7 +811,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
     cleanupRenderRoots();
     const renderComponent = new Component();
     renderComponent.load();
-    const rootEl = appendElement(document.body, "div", {
+    const rootEl = appendElement(activeDocument.body, "div", {
       cls: "mobile-pdf-exporter-render-root"
     });
 
@@ -864,7 +865,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
       await waitForPreviewDomStable(pageEl, previewWaitProfile.initialStableMs);
       await waitForImages(pageEl, IMAGE_WAIT_TIMEOUT_MS);
       await waitForPreviewDomStable(pageEl, previewWaitProfile.finalStableMs);
-      await this.injectNoteDoodleOverlay(file, markdownEl);
+      this.injectNoteDoodleOverlay(file, markdownEl);
       tightenSeparatorTextNodes(pageEl);
       await nextAnimationFrame(FRAME_WAIT_TIMEOUT_MS);
 
@@ -1178,6 +1179,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
       const pageBreaks = computePageBreaks(contentHeightPx, pageHeightPx, keepBlocks);
 
       return {
+        ownerDocument: pageEl.ownerDocument,
         pageWidthPt,
         pageHeightPt,
         sourceWidthPx,
@@ -1571,7 +1573,7 @@ class PdfExportBusyPrompt {
   private painted = false;
 
   constructor(noteName: string, private readonly language: ResolvedUiLanguage) {
-    this.rootEl = appendElement(document.body, "div", {
+    this.rootEl = appendElement(activeDocument.body, "div", {
       cls: "mobile-pdf-exporter-busy"
     });
     this.titleEl = appendElement(this.rootEl, "div", {
@@ -1939,7 +1941,7 @@ function appendElement<K extends keyof HTMLElementTagNameMap>(
   tagName: K,
   options: { cls?: string; text?: string } = {}
 ): HTMLElementTagNameMap[K] {
-  const element = document.createElement(tagName);
+  const element = parent.ownerDocument.createElement(tagName);
   if (options.cls) element.className = options.cls;
   if (options.text !== undefined) element.textContent = options.text;
   parent.appendChild(element);
@@ -1953,7 +1955,7 @@ function normalizeOutputFolder(folder: string): string {
 function getVisibleLiveDrawingOverlay(file: TFile): NoteDoodleOverlaySource | null {
   const candidates: NoteDoodleOverlaySource[] = [];
 
-  for (const surface of Array.from(document.querySelectorAll<HTMLElement>(".note-doodle-shell, .notedraw-shell"))) {
+  for (const surface of Array.from(activeDocument.querySelectorAll<HTMLElement>(".note-doodle-shell, .notedraw-shell"))) {
     if (surface.closest(".mobile-pdf-exporter-render-root")) continue;
     const kind = surface.classList.contains("notedraw-shell") ? "notedraw" : "note-doodle";
     const controller = getLiveDrawingController(surface, kind);
@@ -2019,8 +2021,10 @@ function isVisibleLiveDrawingCanvas(canvas: HTMLCanvasElement): boolean {
 function scoreLiveDrawingOverlay(surface: HTMLElement, canvas: HTMLCanvasElement, controller: LiveDrawingController): number {
   const rect = canvas.getBoundingClientRect();
   const surfaceRect = surface.getBoundingClientRect();
-  const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || rect.width || 1);
-  const viewportHeight = Math.max(1, window.innerHeight || document.documentElement.clientHeight || rect.height || 1);
+  const ownerDocument = surface.ownerDocument;
+  const ownerWindow = ownerDocument.defaultView ?? activeWindow;
+  const viewportWidth = Math.max(1, ownerWindow.innerWidth || ownerDocument.documentElement.clientWidth || rect.width || 1);
+  const viewportHeight = Math.max(1, ownerWindow.innerHeight || ownerDocument.documentElement.clientHeight || rect.height || 1);
   const visibleLeft = Math.max(0, Math.min(viewportWidth, rect.left));
   const visibleRight = Math.max(0, Math.min(viewportWidth, rect.right));
   const visibleTop = Math.max(0, Math.min(viewportHeight, rect.top));
@@ -2223,7 +2227,7 @@ function isExcalidrawSourceText(text: string): boolean {
 }
 
 function tightenSeparatorTextNodes(root: HTMLElement): void {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
       if (!parent) return NodeFilter.FILTER_REJECT;
@@ -2266,7 +2270,7 @@ function tightenSeparatorText(text: string): string {
 function captureTextFragments(pageEl: HTMLElement): TextFragment[] {
   const pageRect = pageEl.getBoundingClientRect();
   const fragments: TextFragment[] = [];
-  const walker = document.createTreeWalker(pageEl, NodeFilter.SHOW_TEXT, {
+  const walker = pageEl.ownerDocument.createTreeWalker(pageEl, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
       if (!parent) return NodeFilter.FILTER_REJECT;
@@ -2606,7 +2610,7 @@ function captureKeepBlockFragments(
 }
 
 function firstTextRectInside(element: HTMLElement): DOMRect | null {
-  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+  const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
       if (!parent) return NodeFilter.FILTER_REJECT;
@@ -2616,7 +2620,7 @@ function firstTextRectInside(element: HTMLElement): DOMRect | null {
     }
   });
 
-  const range = document.createRange();
+  const range = element.ownerDocument.createRange();
   let node = walker.nextNode();
   while (node) {
     const textNode = node as Text;
@@ -2894,7 +2898,7 @@ function measureTextNode(textNode: Text, parent: HTMLElement, pageRect: DOMRect)
     style.textDecoration.includes("underline")
   );
   const text = textNode.nodeValue ?? "";
-  const range = document.createRange();
+  const range = textNode.ownerDocument.createRange();
   const fragments: TextFragment[] = [];
   let current: TextLineDraft | null = null;
   let offset = 0;
@@ -3403,10 +3407,15 @@ function addLinkAnnotation(page: PDFPage, href: string, x: number, y: number, wi
 }
 
 function stripProblematicPdfChars(text: string): string {
-  return text
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu, "")
-    .replace(/[\u{1F000}-\u{1FAFF}]/gu, "")
-    .trim();
+  let stripped = "";
+  for (const char of text) {
+    const codePoint = char.codePointAt(0) ?? 0;
+    if (codePoint <= 0x08 || codePoint === 0x0B || codePoint === 0x0C) continue;
+    if ((codePoint >= 0x0E && codePoint <= 0x1F) || codePoint === 0x7F) continue;
+    if (codePoint >= 0x1F000 && codePoint <= 0x1FAFF) continue;
+    stripped += char;
+  }
+  return stripped.trim();
 }
 
 async function drawImageLayer(
@@ -3713,7 +3722,7 @@ async function renderPreviewPageToPngBytes(
   const pageTopPx = model.pageBreaks[pageIndex];
   const pageBottomPx = model.pageBreaks[pageIndex + 1];
   const scale = getSafePreviewImageScale(model.sourceWidthPx, model.pageHeightPx, options.rasterScale);
-  const canvas = document.createElement("canvas");
+  const canvas = createCanvas(model.ownerDocument);
   const context = canvas.getContext("2d");
   if (!context) throw new Error("图片版 PDF 渲染失败：canvas 不可用。");
 
@@ -4086,7 +4095,7 @@ function drawCanvasText(
 
 async function imageElementToPngBytes(image: HTMLImageElement, colorMode: PdfColorMode = "color"): Promise<Uint8Array | null> {
   try {
-    const canvas = document.createElement("canvas");
+    const canvas = createCanvas(image);
     const context = canvas.getContext("2d");
     if (!context) return null;
 
@@ -4109,7 +4118,7 @@ async function svgElementToPngBytes(
 ): Promise<Uint8Array | null> {
   try {
     const { width, height } = getSvgRasterSize(svg);
-    const canvas = document.createElement("canvas");
+    const canvas = createCanvas(svg);
     const context = canvas.getContext("2d");
     if (!context) return null;
 
@@ -4173,7 +4182,7 @@ async function imageSliceToPngBytes(
   );
   const targetWidth = Math.max(1, Math.floor(sourceWidth * scale));
   const targetHeight = Math.max(1, Math.floor(cropHeight * scale));
-  const canvas = document.createElement("canvas");
+  const canvas = createCanvas(image);
   const context = canvas.getContext("2d");
   if (!context) throw new Error("图片切片失败：canvas 不可用。");
 
@@ -4207,7 +4216,7 @@ function canvasElementSliceToPngBytes(
   const scale = Math.min(1, maxPixelScale);
   const targetWidth = Math.max(1, Math.floor(cropWidth * scale));
   const targetHeight = Math.max(1, Math.floor(cropHeight * scale));
-  const canvas = document.createElement("canvas");
+  const canvas = createCanvas(sourceCanvas);
   const context = canvas.getContext("2d");
   if (!context) return null;
 
@@ -4576,18 +4585,27 @@ function applyCanvasGrayscale(context: CanvasRenderingContext2D, width: number, 
 }
 
 function cleanupRenderRoots(): void {
-  for (const root of Array.from(document.querySelectorAll(".mobile-pdf-exporter-render-root"))) {
+  for (const root of Array.from(activeDocument.querySelectorAll(".mobile-pdf-exporter-render-root"))) {
     root.remove();
   }
 }
 
+function createCanvas(owner: Node | Document): HTMLCanvasElement {
+  const ownerDocument = owner.ownerDocument ?? owner as Document;
+  return ownerDocument.createElement("canvas");
+}
+
 async function waitForPromiseOrTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
   let timeout = 0;
-  const guardedPromise = promise.then(
+  type PromiseRaceResult =
+    | { kind: "resolved"; value: T }
+    | { kind: "rejected"; error: unknown }
+    | { kind: "timeout" };
+  const guardedPromise: Promise<PromiseRaceResult> = promise.then(
     (value) => ({ kind: "resolved" as const, value }),
-    (error) => ({ kind: "rejected" as const, error })
+    (error: unknown) => ({ kind: "rejected" as const, error })
   );
-  const timeoutPromise = new Promise<{ kind: "timeout" }>((resolve) => {
+  const timeoutPromise = new Promise<PromiseRaceResult>((resolve) => {
     timeout = window.setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
   });
 
@@ -4689,7 +4707,7 @@ function hasRenderedContent(container: HTMLElement): boolean {
 }
 
 function hasExportableContent(container: HTMLElement): boolean {
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+  const walker = container.ownerDocument.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
       if (!parent) return NodeFilter.FILTER_REJECT;
@@ -4728,11 +4746,11 @@ async function nextAnimationFrame(timeoutMs = FRAME_WAIT_TIMEOUT_MS): Promise<vo
   let timeout = 0;
   await new Promise<void>((resolve) => {
     const finish = (): void => {
-      if (frame) cancelAnimationFrame(frame);
+      if (frame) window.cancelAnimationFrame(frame);
       window.clearTimeout(timeout);
       resolve();
     };
-    frame = requestAnimationFrame(finish);
+    frame = window.requestAnimationFrame(finish);
     timeout = window.setTimeout(finish, timeoutMs);
   });
 }

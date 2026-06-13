@@ -60,6 +60,12 @@ The release package includes `fonts/NotoSansSC-Regular.otf` for selectable Chine
 
 ## Changelog
 
+### 0.3.39
+
+- Cleans up community review warnings for release dependencies, pop-out window document access, requestAnimationFrame usage, PDF text sanitizing, and CSS compatibility.
+- Adds a GitHub Actions release workflow that builds standard release assets and generates GitHub artifact attestations.
+- Keeps the PDF export behavior from 0.3.38 unchanged.
+
 ### 0.3.38
 
 - Publishes the next standard GitHub release for community plugin review refresh.
