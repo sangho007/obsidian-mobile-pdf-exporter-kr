@@ -4,8 +4,9 @@ One-click preview-style PDF export for Obsidian mobile and desktop.
 
 ## What it does
 
-- Adds one ribbon button, one command, and one note menu item: `导出预览版 PDF`.
+- Adds one ribbon button, one command, and one note menu item. The title follows the configured interface language.
 - Shows a PDF export options panel before exporting, so each export can choose common PDF settings.
+- Supports Auto / Chinese / English UI text for export buttons, menus, commands, options, settings, and export prompts.
 - Exports the current Markdown preview to a phone-width PDF.
 - Keeps text selectable/copyable by writing a real PDF text layer.
 - Adds ordinary-note PDF options for page size, orientation, color/grayscale, margin, content scale, selectable-text PDF, and image PDF.
@@ -19,7 +20,7 @@ One-click preview-style PDF export for Obsidian mobile and desktop.
 
 ## Install
 
-Download `mobile-pdf-exporter-v0.3.34.zip` from the GitHub release, then extract it into:
+Download `mobile-pdf-exporter-v0.3.35.zip` from the GitHub release, then extract it into:
 
 ```text
 <your-vault>/.obsidian/plugins/mobile-pdf-exporter/
@@ -39,9 +40,17 @@ Restart Obsidian, or disable and re-enable the plugin from Obsidian settings.
 
 You can also install this repo through BRAT while it is waiting for inclusion in the official Obsidian community plugin browser.
 
+## Obsidian community plugin browser
+
+To appear in Obsidian's built-in Community plugins browser, this plugin must be submitted to `obsidianmd/obsidian-releases` and pass review. The release used for review should attach the standard Obsidian plugin assets directly: `manifest.json`, `main.js`, and `styles.css`.
+
+The manual full ZIP includes `fonts/NotoSansSC-Regular.otf` for selectable Chinese text export. If a direct community-browser install does not include that font asset, ordinary English/Latin exports fall back to a standard PDF font, while best CJK export quality still comes from the full release package.
+
 ## Usage
 
-Open a Markdown note, then click the `导出预览版 PDF` ribbon/menu command. Choose the page size, orientation, color mode, export mode, and other common PDF options in the panel, then click `导出 PDF`. The exported PDF is saved to `PDF Exports` in the current vault by default.
+Open a Markdown note, then click the `Export preview PDF` ribbon or menu command. Choose the page size, orientation, color mode, export mode, and other common PDF options in the panel, then click `Export PDF`. The exported PDF is saved to `PDF Exports` in the current vault by default.
+
+The interface language can be set to Auto, Chinese, or English in the plugin settings. Auto follows Obsidian's configured language and uses English outside Chinese locales.
 
 ## Notes
 
@@ -51,10 +60,17 @@ The release package includes `fonts/NotoSansSC-Regular.otf` for selectable Chine
 
 ## Changelog
 
+### 0.3.35
+
+- Adds Auto / Chinese / English interface language settings.
+- Localizes the export ribbon tooltip, command name, file/editor menu item, export options panel, settings, busy/completed/error export prompt, and main notices.
+- Auto language follows Obsidian's configured language and falls back to English outside Chinese locales.
+- Falls back to a standard PDF font when the optional CJK font asset is unavailable, improving direct community-browser install compatibility for English/Latin notes.
+
 ### 0.3.34
 
 - Shows the export prompt first after tapping export, then starts the actual PDF work.
-- Simplifies the completed prompt text to a short "导出完成 / 完成" state.
+- Simplifies the completed prompt text to a short completed state.
 
 ### 0.3.33
 
@@ -69,7 +85,7 @@ The release package includes `fonts/NotoSansSC-Regular.otf` for selectable Chine
 ### 0.3.31
 
 - Warms up the PDF runtime and font as soon as the export options modal opens, reducing the delay after tapping export.
-- Shortens fixed export prompt waits while still forcing the "正在导出 PDF" message to paint before work starts.
+- Shortens fixed export prompt waits while still forcing the exporting message to paint before work starts.
 - Uses adaptive preview stabilization and image waits instead of long fixed waits for every note.
 - Reuses embedded image and SVG resources across PDF pages during selectable PDF export.
 
@@ -103,7 +119,7 @@ The release package includes `fonts/NotoSansSC-Regular.otf` for selectable Chine
 
 ### 0.3.24
 
-- Forces the "正在导出 PDF" prompt to paint before the export job starts, so the user sees feedback first.
+- Forces the exporting prompt to paint before the export job starts, so the user sees feedback first.
 - Replaces the top action row with a sticky toolbar whose full background, divider, and buttons stay fixed together while options scroll.
 - Keeps the bottom duplicate export button removed.
 
@@ -113,19 +129,19 @@ The release package includes `fonts/NotoSansSC-Regular.otf` for selectable Chine
 
 ### 0.3.22
 
-- Shows the "正在导出 PDF" prompt first, then waits for the interface to paint before starting the export work.
+- Shows the exporting prompt first, then waits for the interface to paint before starting the export work.
 - Keeps only the top export/cancel actions in the options panel and removes the bottom duplicate action row.
 - Makes the top action row a full sticky background bar so the buttons do not float over scrolling options.
 
 ### 0.3.21
 
-- Replaces the export progress bar with a simple "正在导出 PDF" waiting prompt.
+- Replaces the export progress bar with a simple waiting prompt.
 - The prompt appears as soon as export starts and closes automatically after the export finishes.
 
 ### 0.3.20
 
 - Adds a visible PDF export progress panel with stage text, an animated progress bar, and elapsed-time feedback for long exports.
-- Updates packaged QR-code support text in settings to a bilingual "给我买咖啡 / Buy me a coffee" donation prompt.
+- Updates packaged QR-code support text in settings to a bilingual donation prompt.
 
 ### 0.3.19
 

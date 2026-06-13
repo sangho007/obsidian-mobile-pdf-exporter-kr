@@ -8,9 +8,14 @@ import {
   PluginSettingTab,
   Setting,
   TFile,
+  getLanguage,
   normalizePath
 } from "obsidian";
 import type { Color, PDFDocument, PDFFont, PDFImage, PDFPage } from "pdf-lib";
+
+const UI_LANGUAGES = ["auto", "zh", "en"] as const;
+type UiLanguage = typeof UI_LANGUAGES[number];
+type ResolvedUiLanguage = Exclude<UiLanguage, "auto">;
 
 const NOTE_PDF_EXPORT_MODES = ["selectable", "image"] as const;
 type NotePdfExportMode = typeof NOTE_PDF_EXPORT_MODES[number];
@@ -25,6 +30,7 @@ const PDF_COLOR_MODES = ["color", "grayscale"] as const;
 type PdfColorMode = typeof PDF_COLOR_MODES[number];
 
 interface MobilePdfExporterSettings {
+  language: UiLanguage;
   outputFolder: string;
   marginMm: number;
   includeTitle: boolean;
@@ -237,7 +243,135 @@ interface LiveDrawingController {
   surfaceType?: string;
 }
 
+const UI_TEXT = {
+  zh: {
+    ribbonTitle: "导出预览版 PDF",
+    commandName: "导出当前笔记为预览版 PDF",
+    noMarkdownNotice: "先打开一个 Markdown 笔记。",
+    optionsTitle: "PDF 导出选项",
+    exportModeName: "导出方式",
+    exportModeDesc: "可复制文字版适合阅读、检索、复制；图片版适合保持视觉固定。",
+    exportModeSelectable: "可复制文字版",
+    exportModeImage: "图片版",
+    pageSizeName: "页面大小",
+    orientationName: "方向",
+    orientationPortrait: "竖向",
+    orientationLandscape: "横向",
+    colorName: "色彩",
+    colorOption: "彩色",
+    grayscaleOption: "灰度",
+    marginName: "页边距",
+    contentScaleName: "内容缩放",
+    imageQualityName: "图片版清晰度",
+    imageQualityDesc: "只影响图片版普通笔记 PDF；越高清文件越大。",
+    imageQualityStandard: "标准 / 小文件",
+    imageQualityClear: "清晰 / 推荐",
+    imageQualityHigh: "高清",
+    imageQualityUltra: "超清 / 大文件",
+    includeTitleName: "包含笔记标题",
+    openAfterExportName: "导出后打开",
+    shareAfterExportName: "导出后分享",
+    saveAsDefaultName: "保存为默认",
+    saveAsDefaultDesc: "勾选后，本次选项会写入插件设置，作为下次默认值。",
+    outputFolderName: "输出文件夹",
+    outputFolderDesc: "PDF 保存到库里的这个文件夹。",
+    pdfNameLabel: "PDF 名称",
+    exportPdfButton: "导出 PDF",
+    cancelButton: "取消",
+    busyExporting: "正在导出 PDF",
+    busyCompleteTitle: "导出完成",
+    busyCompleteStatus: "完成",
+    busyFailedTitle: "PDF 导出失败",
+    settingsIntro: "菜单和按钮会先打开 PDF 导出选项；普通 Markdown 笔记可选择可复制文字版或图片版。",
+    settingsGeneralHeading: "通用",
+    settingsNoteOptionsHeading: "普通笔记 PDF 选项",
+    pageSizeDesc: "手机长页适合手机阅读；A4/A5/Letter 适合打印和归档。",
+    orientationDesc: "横向会交换页面宽高。",
+    colorDesc: "灰度适合打印、减小颜色干扰；彩色会保留主题色、链接色和图片颜色。",
+    settingsSaveAndShareHeading: "保存和分享",
+    languageName: "界面语言",
+    languageDesc: "Auto 会跟随 Obsidian 语言；导出按钮、菜单、命令、选项面板和提示会使用所选语言。",
+    languageAuto: "Auto / 跟随 Obsidian",
+    languageChinese: "中文",
+    languageEnglish: "English",
+    codesTitle: "给我买咖啡",
+    codesSubtitle: "如果这个插件帮到你，可以扫码打赏支持继续维护。",
+    shareFailedNotice: "PDF 已保存，但系统分享面板没有打开。",
+    fontMissingError: "缺少 PDF 中文字体文件，请重新安装插件包中的 fonts/NotoSansSC-Regular.otf。",
+    uniqueFileNameError: "无法生成唯一 PDF 文件名。",
+    excalidrawApiMissingError: "没有找到 Excalidraw 导出接口，请确认 Excalidraw 插件已启用。",
+    excalidrawExportFailedError: "Excalidraw 图片过大或导出失败，已尝试降低分辨率和分页切片。",
+    excalidrawPreviewUnavailable: "Excalidraw 预览暂不可用，已跳过源码数据。",
+    previewNoExportSizeError: "预览层没有可导出的尺寸。",
+    previewNoContentError: "预览没有可导出的内容。"
+  },
+  en: {
+    ribbonTitle: "Export preview PDF",
+    commandName: "Export current note as preview PDF",
+    noMarkdownNotice: "Open a Markdown note first.",
+    optionsTitle: "PDF export options",
+    exportModeName: "Export mode",
+    exportModeDesc: "Selectable text is best for reading, search, and copy; image PDF keeps a fixed visual layout.",
+    exportModeSelectable: "Selectable text",
+    exportModeImage: "Image PDF",
+    pageSizeName: "Page size",
+    orientationName: "Orientation",
+    orientationPortrait: "Portrait",
+    orientationLandscape: "Landscape",
+    colorName: "Color",
+    colorOption: "Color",
+    grayscaleOption: "Grayscale",
+    marginName: "Margin",
+    contentScaleName: "Content scale",
+    imageQualityName: "Image PDF quality",
+    imageQualityDesc: "Only affects ordinary-note image PDFs. Higher quality creates larger files.",
+    imageQualityStandard: "Standard / smaller file",
+    imageQualityClear: "Clear / recommended",
+    imageQualityHigh: "High",
+    imageQualityUltra: "Ultra / large file",
+    includeTitleName: "Include note title",
+    openAfterExportName: "Open PDF after export",
+    shareAfterExportName: "Show mobile share sheet",
+    saveAsDefaultName: "Save as default",
+    saveAsDefaultDesc: "Save these choices as the default plugin settings.",
+    outputFolderName: "Output folder",
+    outputFolderDesc: "Save PDFs to this folder inside the vault.",
+    pdfNameLabel: "PDF name",
+    exportPdfButton: "Export PDF",
+    cancelButton: "Cancel",
+    busyExporting: "Exporting PDF",
+    busyCompleteTitle: "Export complete",
+    busyCompleteStatus: "Done",
+    busyFailedTitle: "PDF export failed",
+    settingsIntro: "Menus and buttons open the PDF export options first. Ordinary Markdown notes can export as selectable-text PDFs or image PDFs.",
+    settingsGeneralHeading: "General",
+    settingsNoteOptionsHeading: "Ordinary note PDF options",
+    pageSizeDesc: "Mobile long page is good for phone reading. A4/A5/Letter are useful for printing and archiving.",
+    orientationDesc: "Landscape swaps the page width and height.",
+    colorDesc: "Grayscale is useful for printing; color keeps theme colors, link colors, and image colors.",
+    settingsSaveAndShareHeading: "Save and share",
+    languageName: "Interface language",
+    languageDesc: "Auto follows Obsidian's language. Export buttons, menus, commands, options, and prompts use the selected language.",
+    languageAuto: "Auto / follow Obsidian",
+    languageChinese: "Chinese",
+    languageEnglish: "English",
+    codesTitle: "Buy me a coffee",
+    codesSubtitle: "If this tool helps, tips are appreciated and support ongoing maintenance.",
+    shareFailedNotice: "The PDF was saved, but the system share sheet did not open.",
+    fontMissingError: "Missing PDF font file. Reinstall the plugin package with fonts/NotoSansSC-Regular.otf.",
+    uniqueFileNameError: "Could not generate a unique PDF filename.",
+    excalidrawApiMissingError: "Excalidraw export API was not found. Make sure the Excalidraw plugin is enabled.",
+    excalidrawExportFailedError: "The Excalidraw image was too large or export failed. Lower resolutions and page slicing were already tried.",
+    excalidrawPreviewUnavailable: "Excalidraw preview is unavailable, so source data was skipped.",
+    previewNoExportSizeError: "The preview layer has no exportable size.",
+    previewNoContentError: "The preview has no exportable content."
+  }
+} as const;
+
+type TranslationKey = keyof typeof UI_TEXT.en;
+
 const DEFAULT_SETTINGS: MobilePdfExporterSettings = {
+  language: "auto",
   outputFolder: "PDF Exports",
   marginMm: 7,
   includeTitle: true,
@@ -291,6 +425,42 @@ const SETTINGS_EXTRA_CODE_ASSETS = [
   { path: "extras/code-1.jpg", label: "给我买咖啡 / Buy me a coffee" },
   { path: "extras/code-2.png", label: "支持继续维护 / Support this tool" }
 ] as const;
+
+function resolveUiLanguage(language: UiLanguage): ResolvedUiLanguage {
+  if (language === "zh" || language === "en") return language;
+  const obsidianLanguage = getLanguage().toLowerCase();
+  return obsidianLanguage.startsWith("zh") ? "zh" : "en";
+}
+
+function translate(language: ResolvedUiLanguage, key: TranslationKey): string {
+  return UI_TEXT[language][key];
+}
+
+function getPageLabel(preset: PdfPagePreset, language: ResolvedUiLanguage): string {
+  if (language === "zh") return PDF_PAGE_LABELS[preset];
+  switch (preset) {
+    case "mobile":
+      return "Mobile long page 104 x 225 mm";
+    case "a4":
+      return "A4 210 x 297 mm";
+    case "a5":
+      return "A5 148 x 210 mm";
+    case "letter":
+      return "Letter 8.5 x 11 in";
+  }
+}
+
+function formatBusyElapsed(language: ResolvedUiLanguage, seconds: number): string {
+  if (language === "zh") {
+    return seconds >= 8
+      ? `已用 ${seconds} 秒，仍在处理，请不要关闭 Obsidian。`
+      : `已用 ${seconds} 秒`;
+  }
+  return seconds >= 8
+    ? `${seconds}s elapsed. Still working; do not close Obsidian.`
+    : `${seconds}s elapsed`;
+}
+
 type RegisteredFontkit = Parameters<PDFDocument["registerFontkit"]>[0];
 type FontkitModuleShape = Partial<RegisteredFontkit> & { default?: Partial<RegisteredFontkit> };
 type PdfLibRuntime = typeof import("pdf-lib");
@@ -298,8 +468,14 @@ type PdfFontkitRuntime = typeof import("@pdf-lib/fontkit");
 interface PdfRuntime {
   PDFDocument: PdfLibRuntime["PDFDocument"];
   PDFString: PdfLibRuntime["PDFString"];
+  StandardFonts: PdfLibRuntime["StandardFonts"];
   rgb: PdfLibRuntime["rgb"];
   fontkitModule: PdfFontkitRuntime;
+}
+
+interface ExportFont {
+  font: PDFFont;
+  supportsUnicode: boolean;
 }
 
 let pdfRuntimePromise: Promise<PdfRuntime> | null = null;
@@ -318,6 +494,7 @@ async function loadPdfRuntime(): Promise<PdfRuntime> {
       const runtime: PdfRuntime = {
         PDFDocument: pdfLib.PDFDocument,
         PDFString: pdfLib.PDFString,
+        StandardFonts: pdfLib.StandardFonts,
         rgb: pdfLib.rgb,
         fontkitModule: fontkit
       };
@@ -339,17 +516,19 @@ function getPdfStringRuntime(): PdfLibRuntime["PDFString"] {
 export default class MobilePdfExporterPlugin extends Plugin {
   settings: MobilePdfExporterSettings = DEFAULT_SETTINGS;
   private fontBytesPromise: Promise<ArrayBuffer> | null = null;
+  private ribbonIconEl: HTMLElement | null = null;
+  private exportCommand: { name: string } | null = null;
 
   async onload(): Promise<void> {
     this.settings = normalizeSettings(await this.loadData());
 
-    this.addRibbonIcon("file-output", "导出预览版 PDF", () => {
+    this.ribbonIconEl = this.addRibbonIcon("file-output", this.t("ribbonTitle"), () => {
       void this.exportCurrentFile();
     });
 
-    this.addCommand({
+    this.exportCommand = this.addCommand({
       id: "export-current-note-preview-pdf",
-      name: "导出当前笔记为预览版 PDF",
+      name: this.t("commandName"),
       checkCallback: (checking) => {
         const file = this.getActiveMarkdownFile();
         if (!file) return false;
@@ -363,7 +542,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
         if (!(file instanceof TFile) || file.extension.toLowerCase() !== "md") return;
         menu.addItem((item) => {
           item
-            .setTitle("导出预览版 PDF")
+            .setTitle(this.t("ribbonTitle"))
             .setIcon("file-output")
             .onClick(() => this.openExportOptionsModal(file));
         });
@@ -376,7 +555,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
         if (!file) return;
         menu.addItem((item) => {
           item
-            .setTitle("导出预览版 PDF")
+            .setTitle(this.t("ribbonTitle"))
             .setIcon("file-output")
             .onClick(() => this.openExportOptionsModal(file));
         });
@@ -384,16 +563,32 @@ export default class MobilePdfExporterPlugin extends Plugin {
     );
 
     this.addSettingTab(new MobilePdfExporterSettingTab(this.app, this));
+    this.refreshLocalizedActions();
   }
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
   }
 
+  getResolvedLanguage(): ResolvedUiLanguage {
+    return resolveUiLanguage(this.settings.language);
+  }
+
+  t(key: TranslationKey): string {
+    return translate(this.getResolvedLanguage(), key);
+  }
+
+  refreshLocalizedActions(): void {
+    const title = this.t("ribbonTitle");
+    this.ribbonIconEl?.setAttribute("aria-label", title);
+    this.ribbonIconEl?.setAttribute("title", title);
+    if (this.exportCommand) this.exportCommand.name = this.t("commandName");
+  }
+
   async exportCurrentFile(): Promise<void> {
     const file = this.getActiveMarkdownFile();
     if (!file) {
-      new Notice("先打开一个 Markdown 笔记。");
+      new Notice(this.t("noMarkdownNotice"));
       return;
     }
 
@@ -416,7 +611,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
   async exportFile(file: TFile, exportSettings?: MobilePdfExporterSettings, options: ExportFileOptions = {}): Promise<void> {
     const previousSettings = this.settings;
     if (exportSettings) this.settings = cloneSettings(exportSettings);
-    const exportingPrompt = options.busyPrompt ?? new PdfExportBusyPrompt(file.basename);
+    const exportingPrompt = options.busyPrompt ?? new PdfExportBusyPrompt(file.basename, this.getResolvedLanguage());
     let rendered: RenderedPreview | null = null;
 
     try {
@@ -462,7 +657,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
   private async renderExcalidrawToImagePdf(file: TFile): Promise<Blob> {
     const lease = this.getExcalidrawAutomateLease();
     if (!lease) {
-      throw new Error("没有找到 Excalidraw 导出接口，请确认 Excalidraw 插件已启用。");
+      throw new Error(this.t("excalidrawApiMissingError"));
     }
 
     const errors: string[] = [];
@@ -525,8 +720,10 @@ export default class MobilePdfExporterPlugin extends Plugin {
         }
       }
 
-      const suffix = errors.length > 0 ? `最后错误：${errors[errors.length - 1]}` : "未能取得可用图片。";
-      throw new Error(`Excalidraw 图片过大或导出失败，已尝试降低分辨率和分页切片。${suffix}`);
+      const suffix = this.getResolvedLanguage() === "zh"
+        ? (errors.length > 0 ? `最后错误：${errors[errors.length - 1]}` : "未能取得可用图片。")
+        : (errors.length > 0 ? ` Last error: ${errors[errors.length - 1]}` : " No usable image was produced.");
+      throw new Error(`${this.t("excalidrawExportFailedError")}${suffix}`);
     } finally {
       if (lease.destroyAfterUse) lease.api.destroy?.();
     }
@@ -651,7 +848,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
         if (!renderedSvg && !hasExportableContent(markdownEl)) {
           appendElement(markdownEl, "p", {
             cls: "mobile-pdf-exporter-excalidraw-fallback",
-            text: "Excalidraw 预览暂不可用，已跳过源码数据。"
+            text: this.t("excalidrawPreviewUnavailable")
           });
         }
       }
@@ -671,7 +868,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
 
       const rect = pageEl.getBoundingClientRect();
       if (rect.width < 1 || rect.height < 1 || pageEl.scrollHeight < 1 || !hasExportableContent(markdownEl)) {
-        throw new Error("预览层没有可导出的尺寸。");
+        throw new Error(this.t("previewNoExportSizeError"));
       }
 
       return { rootEl, pageEl, renderComponent };
@@ -784,7 +981,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
   }
 
   private async renderPreviewToSelectablePdf(file: TFile, pageEl: HTMLElement): Promise<Blob> {
-    const { PDFDocument: PDFDocumentRuntime, fontkitModule } = await loadPdfRuntime();
+    const { PDFDocument: PDFDocumentRuntime, StandardFonts, fontkitModule } = await loadPdfRuntime();
     const model = this.capturePreviewPdfModel(pageEl);
 
     if (
@@ -793,14 +990,14 @@ export default class MobilePdfExporterPlugin extends Plugin {
       model.canvasFragments.length === 0 &&
       model.svgFragments.length === 0
     ) {
-      throw new Error("预览没有可导出的内容。");
+      throw new Error(this.t("previewNoContentError"));
     }
 
     const pdfDoc = await PDFDocumentRuntime.create();
     pdfDoc.setTitle(file.basename);
     pdfDoc.setSubject(PDF_SUBJECT);
-    pdfDoc.registerFontkit(resolvePdfFontkit(fontkitModule));
-    const font = await pdfDoc.embedFont(await this.loadFontBytes(), { subset: true });
+    const exportFont = await this.loadExportFont(pdfDoc, fontkitModule, StandardFonts.Helvetica);
+    const { font } = exportFont;
     const resourceCaches: PdfResourceCaches = {
       images: new WeakMap(),
       svgs: new WeakMap()
@@ -902,7 +1099,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
       model.canvasFragments.length === 0 &&
       model.svgFragments.length === 0
     ) {
-      throw new Error("预览没有可导出的内容。");
+      throw new Error(this.t("previewNoContentError"));
     }
 
     const pdfDoc = await PDFDocumentRuntime.create();
@@ -1001,10 +1198,30 @@ export default class MobilePdfExporterPlugin extends Plugin {
         .readBinary(this.getPluginAssetPath("fonts/SimHei.ttf"))
         .catch(() => this.app.vault.adapter.readBinary(this.getPluginAssetPath("fonts/NotoSansSC-Regular.otf")))
         .catch(() => {
-          throw new Error("缺少 PDF 中文字体文件，请重新安装插件包中的 fonts/NotoSansSC-Regular.otf。");
+          throw new Error(this.t("fontMissingError"));
         });
     }
     return this.fontBytesPromise;
+  }
+
+  private async loadExportFont(
+    pdfDoc: PDFDocument,
+    fontkitModule: PdfFontkitRuntime,
+    standardFont: string
+  ): Promise<ExportFont> {
+    try {
+      pdfDoc.registerFontkit(resolvePdfFontkit(fontkitModule));
+      return {
+        font: await pdfDoc.embedFont(await this.loadFontBytes(), { subset: true }),
+        supportsUnicode: true
+      };
+    } catch (error) {
+      console.warn("Mobile PDF Exporter custom PDF font unavailable; falling back to a standard PDF font.", error);
+      return {
+        font: await pdfDoc.embedFont(standardFont),
+        supportsUnicode: false
+      };
+    }
   }
 
   private getPluginAssetPath(relativePath: string): string {
@@ -1034,7 +1251,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
       if (!(await this.app.vault.adapter.exists(path))) return path;
     }
 
-    throw new Error("无法生成唯一 PDF 文件名。");
+    throw new Error(this.t("uniqueFileNameError"));
   }
 
   private async ensureFolderExists(outputFolder: string): Promise<void> {
@@ -1068,7 +1285,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       console.warn("Mobile PDF Exporter share failed", error);
-      new Notice("PDF 已保存，但系统分享面板没有打开。", 5000);
+      new Notice(this.t("shareFailedNotice"), 5000);
     }
   }
 }
@@ -1097,7 +1314,7 @@ class MobilePdfExportOptionsModal extends Modal {
 
     this.addActionToolbar(contentEl);
 
-    appendElement(contentEl, "h2", { text: "PDF 导出选项" });
+    appendElement(contentEl, "h2", { text: this.plugin.t("optionsTitle") });
     appendElement(contentEl, "p", {
       cls: "mobile-pdf-exporter-options-subtitle",
       text: this.file.basename
@@ -1106,12 +1323,12 @@ class MobilePdfExportOptionsModal extends Modal {
     this.addOutputFolderSetting(contentEl);
 
     new Setting(contentEl)
-      .setName("导出方式")
-      .setDesc("可复制文字版适合阅读、检索、复制；图片版适合保持视觉固定。")
+      .setName(this.plugin.t("exportModeName"))
+      .setDesc(this.plugin.t("exportModeDesc"))
       .addDropdown((dropdown) => {
         dropdown
-          .addOption("selectable", "可复制文字版")
-          .addOption("image", "图片版")
+          .addOption("selectable", this.plugin.t("exportModeSelectable"))
+          .addOption("image", this.plugin.t("exportModeImage"))
           .setValue(this.draft.noteExportMode)
           .onChange((value) => {
             this.draft.noteExportMode = normalizeChoice(value, NOTE_PDF_EXPORT_MODES, DEFAULT_SETTINGS.noteExportMode);
@@ -1119,9 +1336,9 @@ class MobilePdfExportOptionsModal extends Modal {
       });
 
     new Setting(contentEl)
-      .setName("页面大小")
+      .setName(this.plugin.t("pageSizeName"))
       .addDropdown((dropdown) => {
-        for (const preset of PDF_PAGE_PRESETS) dropdown.addOption(preset, PDF_PAGE_LABELS[preset]);
+        for (const preset of PDF_PAGE_PRESETS) dropdown.addOption(preset, getPageLabel(preset, this.plugin.getResolvedLanguage()));
         dropdown
           .setValue(this.draft.pagePreset)
           .onChange((value) => {
@@ -1130,11 +1347,11 @@ class MobilePdfExportOptionsModal extends Modal {
       });
 
     new Setting(contentEl)
-      .setName("方向")
+      .setName(this.plugin.t("orientationName"))
       .addDropdown((dropdown) => {
         dropdown
-          .addOption("portrait", "竖向")
-          .addOption("landscape", "横向")
+          .addOption("portrait", this.plugin.t("orientationPortrait"))
+          .addOption("landscape", this.plugin.t("orientationLandscape"))
           .setValue(this.draft.pageOrientation)
           .onChange((value) => {
             this.draft.pageOrientation = normalizeChoice(value, PDF_ORIENTATIONS, DEFAULT_SETTINGS.pageOrientation);
@@ -1142,11 +1359,11 @@ class MobilePdfExportOptionsModal extends Modal {
       });
 
     new Setting(contentEl)
-      .setName("色彩")
+      .setName(this.plugin.t("colorName"))
       .addDropdown((dropdown) => {
         dropdown
-          .addOption("color", "彩色")
-          .addOption("grayscale", "灰度")
+          .addOption("color", this.plugin.t("colorOption"))
+          .addOption("grayscale", this.plugin.t("grayscaleOption"))
           .setValue(this.draft.colorMode)
           .onChange((value) => {
             this.draft.colorMode = normalizeChoice(value, PDF_COLOR_MODES, DEFAULT_SETTINGS.colorMode);
@@ -1154,7 +1371,7 @@ class MobilePdfExportOptionsModal extends Modal {
       });
 
     const marginSetting = new Setting(contentEl)
-      .setName("页边距")
+      .setName(this.plugin.t("marginName"))
       .setDesc(`${this.draft.marginMm} mm`);
     marginSetting.addSlider((slider) => {
       slider
@@ -1168,7 +1385,7 @@ class MobilePdfExportOptionsModal extends Modal {
     });
 
     const scaleSetting = new Setting(contentEl)
-      .setName("内容缩放")
+      .setName(this.plugin.t("contentScaleName"))
       .setDesc(`${this.draft.contentScalePercent}%`);
     scaleSetting.addSlider((slider) => {
       slider
@@ -1182,14 +1399,14 @@ class MobilePdfExportOptionsModal extends Modal {
     });
 
     new Setting(contentEl)
-      .setName("图片版清晰度")
-      .setDesc("只影响图片版普通笔记 PDF；越高清文件越大。")
+      .setName(this.plugin.t("imageQualityName"))
+      .setDesc(this.plugin.t("imageQualityDesc"))
       .addDropdown((dropdown) => {
         dropdown
-          .addOption("1", "标准 / 小文件")
-          .addOption("1.5", "清晰 / 推荐")
-          .addOption("2", "高清")
-          .addOption("3", "超清 / 大文件")
+          .addOption("1", this.plugin.t("imageQualityStandard"))
+          .addOption("1.5", this.plugin.t("imageQualityClear"))
+          .addOption("2", this.plugin.t("imageQualityHigh"))
+          .addOption("3", this.plugin.t("imageQualityUltra"))
           .setValue(String(this.draft.imageRasterScale))
           .onChange((value) => {
             this.draft.imageRasterScale = clampNumber(Number.parseFloat(value), 1, 3, DEFAULT_SETTINGS.imageRasterScale);
@@ -1197,7 +1414,7 @@ class MobilePdfExportOptionsModal extends Modal {
       });
 
     new Setting(contentEl)
-      .setName("包含笔记标题")
+      .setName(this.plugin.t("includeTitleName"))
       .addToggle((toggle) => {
         toggle
           .setValue(this.draft.includeTitle)
@@ -1207,7 +1424,7 @@ class MobilePdfExportOptionsModal extends Modal {
       });
 
     new Setting(contentEl)
-      .setName("导出后打开")
+      .setName(this.plugin.t("openAfterExportName"))
       .addToggle((toggle) => {
         toggle
           .setValue(this.draft.openAfterExport)
@@ -1217,7 +1434,7 @@ class MobilePdfExportOptionsModal extends Modal {
       });
 
     new Setting(contentEl)
-      .setName("导出后分享")
+      .setName(this.plugin.t("shareAfterExportName"))
       .addToggle((toggle) => {
         toggle
           .setValue(this.draft.shareAfterExport)
@@ -1227,8 +1444,8 @@ class MobilePdfExportOptionsModal extends Modal {
       });
 
     new Setting(contentEl)
-      .setName("保存为默认")
-      .setDesc("勾选后，本次选项会写入插件设置，作为下次默认值。")
+      .setName(this.plugin.t("saveAsDefaultName"))
+      .setDesc(this.plugin.t("saveAsDefaultDesc"))
       .addToggle((toggle) => {
         toggle
           .setValue(this.saveAsDefault)
@@ -1241,8 +1458,8 @@ class MobilePdfExportOptionsModal extends Modal {
 
   private addOutputFolderSetting(parent: HTMLElement): void {
     new Setting(parent)
-      .setName("输出文件夹")
-      .setDesc("PDF 保存到库里的这个文件夹。")
+      .setName(this.plugin.t("outputFolderName"))
+      .setDesc(this.plugin.t("outputFolderDesc"))
       .addText((text) => {
         text
           .setPlaceholder(DEFAULT_SETTINGS.outputFolder)
@@ -1262,7 +1479,7 @@ class MobilePdfExportOptionsModal extends Modal {
     this.exporting = true;
     const exportSettings = cloneSettings(this.draft);
     const outputBaseName = sanitizePdfBaseName(this.outputBaseName) || defaultPdfBaseName(this.file);
-    const exportingPrompt = new PdfExportBusyPrompt(this.file.basename);
+    const exportingPrompt = new PdfExportBusyPrompt(this.file.basename, this.plugin.getResolvedLanguage());
 
     try {
       await exportingPrompt.waitUntilPainted();
@@ -1297,7 +1514,7 @@ class MobilePdfExportOptionsModal extends Modal {
     });
     appendElement(nameWrapEl, "span", {
       cls: "mobile-pdf-exporter-options-name-label",
-      text: "PDF 名称"
+      text: this.plugin.t("pdfNameLabel")
     });
     const nameInput = appendElement(nameWrapEl, "input", {
       cls: "mobile-pdf-exporter-options-name-input"
@@ -1317,7 +1534,7 @@ class MobilePdfExportOptionsModal extends Modal {
 
     const exportButton = appendElement(innerEl, "button", {
       cls: "mod-cta mobile-pdf-exporter-options-button",
-      text: "导出 PDF"
+      text: this.plugin.t("exportPdfButton")
     });
     exportButton.type = "button";
     exportButton.addEventListener("click", () => {
@@ -1329,7 +1546,7 @@ class MobilePdfExportOptionsModal extends Modal {
 
     const cancelButton = appendElement(innerEl, "button", {
       cls: "mobile-pdf-exporter-options-button",
-      text: "取消"
+      text: this.plugin.t("cancelButton")
     });
     cancelButton.type = "button";
     cancelButton.addEventListener("click", () => this.close());
@@ -1347,13 +1564,13 @@ class PdfExportBusyPrompt {
   private failed = false;
   private painted = false;
 
-  constructor(noteName: string) {
+  constructor(noteName: string, private readonly language: ResolvedUiLanguage) {
     this.rootEl = appendElement(document.body, "div", {
       cls: "mobile-pdf-exporter-busy"
     });
     this.titleEl = appendElement(this.rootEl, "div", {
       cls: "mobile-pdf-exporter-busy-title",
-      text: "正在导出 PDF"
+      text: translate(this.language, "busyExporting")
     });
     appendElement(this.rootEl, "div", {
       cls: "mobile-pdf-exporter-busy-file",
@@ -1361,7 +1578,7 @@ class PdfExportBusyPrompt {
     });
     this.elapsedEl = appendElement(this.rootEl, "div", {
       cls: "mobile-pdf-exporter-busy-elapsed",
-      text: "已用 0 秒"
+      text: formatBusyElapsed(this.language, 0)
     });
     this.timer = window.setInterval(() => this.updateElapsed(), 1000);
   }
@@ -1380,8 +1597,8 @@ class PdfExportBusyPrompt {
   done(): void {
     if (this.closed) return;
     this.rootEl.addClass("is-complete");
-    this.titleEl.textContent = "导出完成";
-    this.elapsedEl.textContent = "完成";
+    this.titleEl.textContent = translate(this.language, "busyCompleteTitle");
+    this.elapsedEl.textContent = translate(this.language, "busyCompleteStatus");
     window.clearInterval(this.timer);
   }
 
@@ -1389,7 +1606,7 @@ class PdfExportBusyPrompt {
     if (this.closed) return;
     this.failed = true;
     this.rootEl.addClass("is-error");
-    this.titleEl.textContent = "PDF 导出失败";
+    this.titleEl.textContent = translate(this.language, "busyFailedTitle");
     this.elapsedEl.textContent = message;
     this.updateElapsed();
   }
@@ -1403,12 +1620,10 @@ class PdfExportBusyPrompt {
     if (this.failed) return;
     const seconds = Math.max(0, Math.round((Date.now() - this.startedAt) / 1000));
     if (this.rootEl.classList.contains("is-complete")) {
-      this.elapsedEl.textContent = "完成";
+      this.elapsedEl.textContent = translate(this.language, "busyCompleteStatus");
       return;
     }
-    this.elapsedEl.textContent = seconds >= 8
-      ? `已用 ${seconds} 秒，仍在处理，请不要关闭 Obsidian。`
-      : `已用 ${seconds} 秒`;
+    this.elapsedEl.textContent = formatBusyElapsed(this.language, seconds);
   }
 
   private close(): void {
@@ -1430,18 +1645,37 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
     containerEl.replaceChildren();
     appendElement(containerEl, "h2", { text: "Mobile PDF Exporter" });
     appendElement(containerEl, "p", {
-      text: "菜单和按钮会先打开 PDF 导出选项；普通 Markdown 笔记可选择可复制文字版或图片版。"
+      text: this.plugin.t("settingsIntro")
     });
 
-    appendElement(containerEl, "h3", { text: "普通笔记 PDF 选项" });
+    appendElement(containerEl, "h3", { text: this.plugin.t("settingsGeneralHeading") });
 
     new Setting(containerEl)
-      .setName("导出方式")
-      .setDesc("可复制文字版适合阅读、检索、复制；图片版适合保持视觉固定。")
+      .setName(this.plugin.t("languageName"))
+      .setDesc(this.plugin.t("languageDesc"))
       .addDropdown((dropdown) => {
         dropdown
-          .addOption("selectable", "可复制文字版")
-          .addOption("image", "图片版")
+          .addOption("auto", this.plugin.t("languageAuto"))
+          .addOption("zh", this.plugin.t("languageChinese"))
+          .addOption("en", this.plugin.t("languageEnglish"))
+          .setValue(this.plugin.settings.language)
+          .onChange(async (value) => {
+            this.plugin.settings.language = normalizeChoice(value, UI_LANGUAGES, DEFAULT_SETTINGS.language);
+            await this.plugin.saveSettings();
+            this.plugin.refreshLocalizedActions();
+            this.display();
+          });
+      });
+
+    appendElement(containerEl, "h3", { text: this.plugin.t("settingsNoteOptionsHeading") });
+
+    new Setting(containerEl)
+      .setName(this.plugin.t("exportModeName"))
+      .setDesc(this.plugin.t("exportModeDesc"))
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("selectable", this.plugin.t("exportModeSelectable"))
+          .addOption("image", this.plugin.t("exportModeImage"))
           .setValue(this.plugin.settings.noteExportMode)
           .onChange(async (value) => {
             this.plugin.settings.noteExportMode = normalizeChoice(value, NOTE_PDF_EXPORT_MODES, DEFAULT_SETTINGS.noteExportMode);
@@ -1450,10 +1684,10 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("页面大小")
-      .setDesc("手机长页适合手机阅读；A4/A5/Letter 适合打印和归档。")
+      .setName(this.plugin.t("pageSizeName"))
+      .setDesc(this.plugin.t("pageSizeDesc"))
       .addDropdown((dropdown) => {
-        for (const preset of PDF_PAGE_PRESETS) dropdown.addOption(preset, PDF_PAGE_LABELS[preset]);
+        for (const preset of PDF_PAGE_PRESETS) dropdown.addOption(preset, getPageLabel(preset, this.plugin.getResolvedLanguage()));
         dropdown
           .setValue(this.plugin.settings.pagePreset)
           .onChange(async (value) => {
@@ -1463,12 +1697,12 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("方向")
-      .setDesc("横向会交换页面宽高。")
+      .setName(this.plugin.t("orientationName"))
+      .setDesc(this.plugin.t("orientationDesc"))
       .addDropdown((dropdown) => {
         dropdown
-          .addOption("portrait", "竖向")
-          .addOption("landscape", "横向")
+          .addOption("portrait", this.plugin.t("orientationPortrait"))
+          .addOption("landscape", this.plugin.t("orientationLandscape"))
           .setValue(this.plugin.settings.pageOrientation)
           .onChange(async (value) => {
             this.plugin.settings.pageOrientation = normalizeChoice(value, PDF_ORIENTATIONS, DEFAULT_SETTINGS.pageOrientation);
@@ -1477,12 +1711,12 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("色彩")
-      .setDesc("灰度适合打印、减小颜色干扰；彩色会保留主题色、链接色和图片颜色。")
+      .setName(this.plugin.t("colorName"))
+      .setDesc(this.plugin.t("colorDesc"))
       .addDropdown((dropdown) => {
         dropdown
-          .addOption("color", "彩色")
-          .addOption("grayscale", "灰度")
+          .addOption("color", this.plugin.t("colorOption"))
+          .addOption("grayscale", this.plugin.t("grayscaleOption"))
           .setValue(this.plugin.settings.colorMode)
           .onChange(async (value) => {
             this.plugin.settings.colorMode = normalizeChoice(value, PDF_COLOR_MODES, DEFAULT_SETTINGS.colorMode);
@@ -1491,7 +1725,7 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
       });
 
     const marginSetting = new Setting(containerEl)
-      .setName("页边距")
+      .setName(this.plugin.t("marginName"))
       .setDesc(`${this.plugin.settings.marginMm} mm`);
     marginSetting.addSlider((slider) => {
       slider
@@ -1506,7 +1740,7 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
     });
 
     const scaleSetting = new Setting(containerEl)
-      .setName("内容缩放")
+      .setName(this.plugin.t("contentScaleName"))
       .setDesc(`${this.plugin.settings.contentScalePercent}%`);
     scaleSetting.addSlider((slider) => {
       slider
@@ -1521,14 +1755,14 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
     });
 
     new Setting(containerEl)
-      .setName("图片版清晰度")
-      .setDesc("只影响图片版普通笔记 PDF；越高清文件越大。")
+      .setName(this.plugin.t("imageQualityName"))
+      .setDesc(this.plugin.t("imageQualityDesc"))
       .addDropdown((dropdown) => {
         dropdown
-          .addOption("1", "标准 / 小文件")
-          .addOption("1.5", "清晰 / 推荐")
-          .addOption("2", "高清")
-          .addOption("3", "超清 / 大文件")
+          .addOption("1", this.plugin.t("imageQualityStandard"))
+          .addOption("1.5", this.plugin.t("imageQualityClear"))
+          .addOption("2", this.plugin.t("imageQualityHigh"))
+          .addOption("3", this.plugin.t("imageQualityUltra"))
           .setValue(String(this.plugin.settings.imageRasterScale))
           .onChange(async (value) => {
             this.plugin.settings.imageRasterScale = clampNumber(Number.parseFloat(value), 1, 3, DEFAULT_SETTINGS.imageRasterScale);
@@ -1537,7 +1771,7 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("包含笔记标题")
+      .setName(this.plugin.t("includeTitleName"))
       .addToggle((toggle) => {
         toggle
           .setValue(this.plugin.settings.includeTitle)
@@ -1547,11 +1781,11 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
           });
       });
 
-    appendElement(containerEl, "h3", { text: "保存和分享" });
+    appendElement(containerEl, "h3", { text: this.plugin.t("settingsSaveAndShareHeading") });
 
     new Setting(containerEl)
-      .setName("Output folder")
-      .setDesc("PDF 保存到库里的这个文件夹。")
+      .setName(this.plugin.t("outputFolderName"))
+      .setDesc(this.plugin.t("outputFolderDesc"))
       .addText((text) => {
         text
           .setPlaceholder(DEFAULT_SETTINGS.outputFolder)
@@ -1563,7 +1797,7 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Open PDF after export")
+      .setName(this.plugin.t("openAfterExportName"))
       .addToggle((toggle) => {
         toggle
           .setValue(this.plugin.settings.openAfterExport)
@@ -1574,7 +1808,7 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
       });
 
     new Setting(containerEl)
-      .setName("Show mobile share sheet")
+      .setName(this.plugin.t("shareAfterExportName"))
       .addToggle((toggle) => {
         toggle
           .setValue(this.plugin.settings.shareAfterExport)
@@ -1607,11 +1841,11 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
 
     appendElement(containerEl, "div", {
       cls: "mobile-pdf-exporter-settings-codes-title",
-      text: "给我买咖啡 / Buy me a coffee"
+      text: this.plugin.t("codesTitle")
     });
     appendElement(containerEl, "div", {
       cls: "mobile-pdf-exporter-settings-codes-subtitle",
-      text: "如果这个插件帮到你，可以扫码打赏支持继续维护 / If this tool helps, tips are appreciated."
+      text: this.plugin.t("codesSubtitle")
     });
 
     const gridEl = appendElement(containerEl, "div", {
@@ -1639,6 +1873,7 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
 function normalizeSettings(raw: unknown): MobilePdfExporterSettings {
   const saved = (raw && typeof raw === "object" ? raw : {}) as Partial<MobilePdfExporterSettings>;
   return {
+    language: normalizeChoice(saved.language, UI_LANGUAGES, DEFAULT_SETTINGS.language),
     outputFolder: typeof saved.outputFolder === "string" && saved.outputFolder.trim()
       ? saved.outputFolder.trim()
       : DEFAULT_SETTINGS.outputFolder,
@@ -1661,6 +1896,7 @@ function normalizeSettings(raw: unknown): MobilePdfExporterSettings {
 
 function cloneSettings(settings: MobilePdfExporterSettings): MobilePdfExporterSettings {
   return {
+    language: settings.language,
     outputFolder: settings.outputFolder,
     marginMm: settings.marginMm,
     includeTitle: settings.includeTitle,
@@ -3038,7 +3274,7 @@ function drawSafeText(
     maxWidth: number;
   }
 ): { text: string; size: number; width: number } {
-  const clean = stripProblematicPdfChars(compactSeparatorSpacing(text));
+  const clean = getEncodablePdfText(options.font, stripProblematicPdfChars(compactSeparatorSpacing(text)));
   if (!clean) return { text: "", size: options.size, width: 0 };
   const width = options.font.widthOfTextAtSize(clean, options.size);
   const fitSize = width > options.maxWidth
@@ -3057,7 +3293,10 @@ function drawSafeText(
     page.drawText(clean, drawOptions);
     return { text: clean, size: fitSize, width: fitWidth };
   } catch {
-    const fallback = clean.replace(/[^\u0020-\u007E\u3400-\u9FFF\uF900-\uFAFF，。！？、；：“”‘’（）《》【】￥…—]/gu, "");
+    const fallback = getEncodablePdfText(
+      options.font,
+      clean.replace(/[^\u0020-\u007E\u3400-\u9FFF\uF900-\uFAFF，。！？、；：“”‘’（）《》【】￥…—]/gu, "")
+    );
     if (!fallback) return { text: "", size: fitSize, width: 0 };
     try {
       const fallbackWidth = options.font.widthOfTextAtSize(fallback, options.size);
@@ -3074,6 +3313,28 @@ function drawSafeText(
       // One unsupported line should not make the whole export fail.
       return { text: "", size: fitSize, width: 0 };
     }
+  }
+}
+
+function getEncodablePdfText(font: PDFFont, text: string): string {
+  if (!text) return "";
+  if (canEncodePdfText(font, text)) return text;
+
+  const cjkFallback = text.replace(/[^\u0020-\u007E\u3400-\u9FFF\uF900-\uFAFF，。！？、；：“”‘’（）《》【】￥…—]/gu, "");
+  if (cjkFallback && canEncodePdfText(font, cjkFallback)) return cjkFallback;
+
+  const asciiFallback = text.replace(/[^\u0020-\u007E]/gu, "");
+  if (asciiFallback && canEncodePdfText(font, asciiFallback)) return asciiFallback;
+
+  return "";
+}
+
+function canEncodePdfText(font: PDFFont, text: string): boolean {
+  try {
+    font.encodeText(text);
+    return true;
+  } catch {
+    return false;
   }
 }
 

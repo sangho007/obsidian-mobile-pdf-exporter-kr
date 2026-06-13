@@ -1,3 +1,4 @@
+import { readFile, writeFile } from "node:fs/promises";
 import process from "node:process";
 import builtins from "builtin-modules";
 import esbuild from "esbuild";
@@ -42,6 +43,8 @@ const context = await esbuild.context({
 if (prod) {
   await context.rebuild();
   await context.dispose();
+  const output = await readFile("main.js", "utf8");
+  await writeFile("main.js", output.replace(/[ \t]+$/gm, ""), "utf8");
 } else {
   await context.watch();
 }
