@@ -8,7 +8,6 @@ import {
   PluginSettingTab,
   Setting,
   TFile,
-  getLanguage,
   normalizePath
 } from "obsidian";
 import type { Color, PDFDocument, PDFFont, PDFImage, PDFPage } from "pdf-lib";
@@ -428,8 +427,9 @@ const SETTINGS_EXTRA_CODE_ASSETS = [
 
 function resolveUiLanguage(language: UiLanguage): ResolvedUiLanguage {
   if (language === "zh" || language === "en") return language;
-  const obsidianLanguage = getLanguage().toLowerCase();
-  return obsidianLanguage.startsWith("zh") ? "zh" : "en";
+  const browserLanguage = (window.navigator.language || "").toLowerCase();
+  const browserLanguages = (window.navigator.languages || []).map((item) => item.toLowerCase());
+  return [browserLanguage, ...browserLanguages].some((item) => item.startsWith("zh")) ? "zh" : "en";
 }
 
 function translate(language: ResolvedUiLanguage, key: TranslationKey): string {
@@ -815,10 +815,12 @@ export default class MobilePdfExporterPlugin extends Plugin {
     });
 
     try {
-      rootEl.style.setProperty("--mobile-pdf-exporter-width", `${renderWidthPx}px`);
-      rootEl.style.setProperty("--mobile-pdf-exporter-padding", `${paddingPx}px`);
-      rootEl.style.setProperty("--mobile-pdf-exporter-page-height", `${mmToPx(pageSizeMm.height)}px`);
-      rootEl.style.setProperty("--mobile-pdf-exporter-font-scale", String(this.settings.contentScalePercent / 100));
+      rootEl.setCssProps({
+        "--mobile-pdf-exporter-width": `${renderWidthPx}px`,
+        "--mobile-pdf-exporter-padding": `${paddingPx}px`,
+        "--mobile-pdf-exporter-page-height": `${mmToPx(pageSizeMm.height)}px`,
+        "--mobile-pdf-exporter-font-scale": String(this.settings.contentScalePercent / 100)
+      });
 
       const pageEl = appendElement(rootEl, "div", {
         cls: "mobile-pdf-exporter-page markdown-reading-view"
@@ -896,13 +898,15 @@ export default class MobilePdfExporterPlugin extends Plugin {
 
       svg.classList.add("mobile-pdf-exporter-excalidraw-svg");
       svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
-      svg.style.display = "block";
-      svg.style.width = "100%";
-      svg.style.maxWidth = "100%";
-      svg.style.height = "auto";
+      svg.setCssStyles({
+        display: "block",
+        width: "100%",
+        maxWidth: "100%",
+        height: "auto"
+      });
       const viewBox = svg.viewBox.baseVal;
       if (viewBox.width > 0 && viewBox.height > 0) {
-        svg.style.aspectRatio = `${viewBox.width} / ${viewBox.height}`;
+        svg.setCssStyles({ aspectRatio: `${viewBox.width} / ${viewBox.height}` });
       }
 
       const previewEl = appendElement(markdownEl, "div", {
@@ -952,7 +956,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
     const maxPixelScale = Math.sqrt(PREVIEW_IMAGE_MAX_CANVAS_PIXELS / Math.max(1, width * height));
     const ratio = clampNumber(Math.min(window.devicePixelRatio || 1, maxPixelScale), 0.5, 2, 1);
     const previousPosition = getComputedStyle(markdownEl).position;
-    if (previousPosition === "static") markdownEl.style.position = "relative";
+    if (previousPosition === "static") markdownEl.setCssStyles({ position: "relative" });
 
     markdownEl.addClass("mobile-pdf-exporter-note-doodle-host");
     const canvas = appendElement(markdownEl, "canvas", {
@@ -960,13 +964,15 @@ export default class MobilePdfExporterPlugin extends Plugin {
     });
     canvas.width = Math.max(1, Math.ceil(width * ratio));
     canvas.height = Math.max(1, Math.ceil(height * ratio));
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
-    canvas.style.position = "absolute";
-    canvas.style.left = "0";
-    canvas.style.top = "0";
-    canvas.style.pointerEvents = "none";
-    canvas.style.zIndex = "60";
+    canvas.setCssStyles({
+      width: `${width}px`,
+      height: `${height}px`,
+      position: "absolute",
+      left: "0",
+      top: "0",
+      pointerEvents: "none",
+      zIndex: "60"
+    });
     canvas.setAttribute("aria-hidden", "true");
 
     const context = canvas.getContext("2d");
@@ -1585,7 +1591,7 @@ class PdfExportBusyPrompt {
 
   async waitUntilPainted(): Promise<void> {
     if (this.closed || this.painted) return;
-    this.rootEl.style.display = "grid";
+    this.rootEl.setCssStyles({ display: "grid" });
     this.rootEl.addClass("is-visible");
     this.rootEl.getBoundingClientRect();
     this.updateElapsed();
@@ -2189,7 +2195,7 @@ function hideExcalidrawSourceBlocks(root: HTMLElement): void {
 function markSkipElement(element: HTMLElement): void {
   element.classList.add("mobile-pdf-exporter-skip");
   element.setAttribute("aria-hidden", "true");
-  element.style.display = "none";
+  element.setCssStyles({ display: "none" });
 }
 
 function markElementAndFollowingSourceSiblings(root: HTMLElement, element: HTMLElement): void {
@@ -4118,7 +4124,7 @@ async function svgElementToPngBytes(
     clone.setAttribute("width", String(width));
     clone.setAttribute("height", String(height));
     if (!clone.getAttribute("viewBox")) clone.setAttribute("viewBox", `0 0 ${width} ${height}`);
-    clone.style.color = getComputedStyle(svg).color;
+    clone.setCssStyles({ color: getComputedStyle(svg).color });
 
     const xml = new XMLSerializer().serializeToString(clone);
     const blob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });

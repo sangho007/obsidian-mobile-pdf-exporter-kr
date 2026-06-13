@@ -20,7 +20,7 @@ One-click preview-style PDF export for Obsidian mobile and desktop.
 
 ## Install
 
-Download `mobile-pdf-exporter-v0.3.35.zip` from the GitHub release, then extract it into:
+Download `mobile-pdf-exporter-v0.3.36.zip` from the GitHub release, then extract it into:
 
 ```text
 <your-vault>/.obsidian/plugins/mobile-pdf-exporter/
@@ -50,7 +50,7 @@ The manual full ZIP includes `fonts/NotoSansSC-Regular.otf` for selectable Chine
 
 Open a Markdown note, then click the `Export preview PDF` ribbon or menu command. Choose the page size, orientation, color mode, export mode, and other common PDF options in the panel, then click `Export PDF`. The exported PDF is saved to `PDF Exports` in the current vault by default.
 
-The interface language can be set to Auto, Chinese, or English in the plugin settings. Auto follows Obsidian's configured language and uses English outside Chinese locales.
+The interface language can be set to Auto, Chinese, or English in the plugin settings. Auto follows the browser/system locale and uses English outside Chinese locales.
 
 ## Notes
 
@@ -60,11 +60,17 @@ The release package includes `fonts/NotoSansSC-Regular.otf` for selectable Chine
 
 ## Changelog
 
+### 0.3.36
+
+- Fixes automated community plugin review errors for the manifest description and supported API checks.
+- Replaces direct style assignments flagged by the reviewer with Obsidian-compatible style helpers.
+- Keeps the 0.3.35 bilingual export UI and standard PDF font fallback behavior.
+
 ### 0.3.35
 
 - Adds Auto / Chinese / English interface language settings.
 - Localizes the export ribbon tooltip, command name, file/editor menu item, export options panel, settings, busy/completed/error export prompt, and main notices.
-- Auto language follows Obsidian's configured language and falls back to English outside Chinese locales.
+- Auto language follows the browser/system locale and falls back to English outside Chinese locales.
 - Falls back to a standard PDF font when the optional CJK font asset is unavailable, improving direct community-browser install compatibility for English/Latin notes.
 
 ### 0.3.34
