@@ -60,6 +60,11 @@ The release package includes `fonts/NotoSansSC-Regular.otf` for selectable Chine
 
 ## Changelog
 
+### 0.3.40
+
+- Migrates the settings page from deprecated imperative `display()` rendering to Obsidian's current `getSettingDefinitions()` API.
+- Raises `minAppVersion` to 1.13.0 because the current settings API is available from Obsidian 1.13.0.
+
 ### 0.3.39
 
 - Cleans up community review warnings for release dependencies, pop-out window document access, requestAnimationFrame usage, PDF text sanitizing, and CSS compatibility.
