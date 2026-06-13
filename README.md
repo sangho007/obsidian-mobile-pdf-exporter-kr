@@ -20,7 +20,7 @@ One-click preview-style PDF export for Obsidian mobile and desktop.
 
 ## Install
 
-Download `mobile-pdf-exporter-v0.3.36.zip` from the GitHub release, then extract it into:
+Download the latest release assets from GitHub, then extract them into:
 
 ```text
 <your-vault>/.obsidian/plugins/mobile-pdf-exporter/
@@ -59,6 +59,11 @@ Markor creates PDF through Android WebView printing, so its preview PDF text is 
 The release package includes `fonts/NotoSansSC-Regular.otf` for selectable Chinese text export. The font is read only when exporting, so `main.js` stays smaller and Obsidian startup avoids parsing an embedded font string.
 
 ## Changelog
+
+### 0.3.37
+
+- Carries forward the 0.3.36 community-review-compatible release structure.
+- Keeps the standard direct release assets as `manifest.json`, `main.js`, and `styles.css`.
 
 ### 0.3.36
 
