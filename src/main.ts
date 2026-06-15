@@ -2576,18 +2576,27 @@ function captureDecorationFragments(pageEl: HTMLElement): DecorationFragment[] {
     if (rect.width <= 0 || rect.height <= 0) continue;
     const item = checkbox.closest<HTMLElement>("li");
     if (item) itemsWithVisibleCheckbox.add(item);
+    const textRect = item ? firstTextRectInside(item) : null;
+    const itemStyle = item ? getComputedStyle(item) : style;
+    const fontSizePx = parseFloat(itemStyle.fontSize) || parseFloat(style.fontSize) || 16;
+    const size = Math.max(8, Math.min(rect.width, rect.height, fontSizePx * 0.88));
+    const centerY = textRect
+      ? textRect.top - pageRect.top + textRect.height * 0.48
+      : rect.top - pageRect.top + rect.height / 2;
+    const left = rect.left - pageRect.left + Math.max(0, (rect.width - size) / 2);
+    const top = centerY - size / 2 - fontSizePx * 0.03;
 
     decorations.push({
       kind: "checkbox",
-      left: rect.left - pageRect.left,
-      top: rect.top - pageRect.top,
-      right: rect.right - pageRect.left,
-      bottom: rect.bottom - pageRect.top,
+      left,
+      top,
+      right: left + size,
+      bottom: top + size,
       color: parseCssColor(style.accentColor) ?? parseCssColor(style.color) ?? rgb(0.12, 0.12, 0.12),
       border: parseCssColor(style.borderColor) ?? parseCssColor(style.color) ?? rgb(0.35, 0.35, 0.35),
       checked: checkbox.checked,
       text: getTaskStatusText(checkbox),
-      fontSizePx: parseFloat(style.fontSize) || 16
+      fontSizePx
     });
   }
 
@@ -2600,7 +2609,7 @@ function captureDecorationFragments(pageEl: HTMLElement): DecorationFragment[] {
     const fontSizePx = parseFloat(style.fontSize) || 16;
     const size = Math.max(9, Math.min(16, fontSizePx * 0.88));
     const textLeft = firstRect.left - pageRect.left;
-    const top = firstRect.top - pageRect.top + Math.max(0, (firstRect.height - size) * 0.5);
+    const top = firstRect.top - pageRect.top + firstRect.height * 0.48 - size / 2 - fontSizePx * 0.03;
     const left = Math.max(0, textLeft - fontSizePx * 1.55);
     const checkbox = item.querySelector<HTMLInputElement>("input[type='checkbox']");
     const status = getTaskStatusFromElement(checkbox ?? item);
@@ -4249,7 +4258,7 @@ function drawCanvasText(
     colorMode: PdfColorMode;
   }
 ): { text: string; size: number; width: number } {
-  const clean = normalizeLineText(text);
+  const clean = normalizeCanvasVisibleText(text);
   if (!clean) return { text: "", size: options.size, width: 0 };
 
   let size = options.size;
@@ -4269,13 +4278,17 @@ function drawCanvasText(
 
 function splitCanvasTextRuns(text: string): Array<{ text: string; emoji: boolean }> {
   const runs: Array<{ text: string; emoji: boolean }> = [];
-  for (const char of Array.from(text)) {
-    const emoji = isEmojiLikeChar(char);
+  const segments = Array.from(
+    text.matchAll(/(?:[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]\uFE0F?|[^\uFE0F])/gu),
+    (match) => match[0]
+  );
+  for (const segment of segments) {
+    const emoji = isEmojiLikeText(segment);
     const previous = runs[runs.length - 1];
     if (previous && previous.emoji === emoji) {
-      previous.text += char;
+      previous.text += segment;
     } else {
-      runs.push({ text: char, emoji });
+      runs.push({ text: segment, emoji });
     }
   }
   return runs;
@@ -4293,6 +4306,10 @@ function measureCanvasTextRuns(
 ): number {
   let width = 0;
   for (const run of runs) {
+    if (run.emoji) {
+      width += measureEmojiCanvasText(run.text, size);
+      continue;
+    }
     context.font = getCanvasTextFont(size, run.emoji, fontOptions);
     width += context.measureText(run.text).width;
   }
@@ -4313,6 +4330,10 @@ function drawCanvasTextRuns(
 ): void {
   let cursorX = x;
   for (const run of runs) {
+    if (run.emoji) {
+      cursorX += drawEmojiCanvasText(context, run.text, cursorX, y, size);
+      continue;
+    }
     context.font = getCanvasTextFont(size, run.emoji, fontOptions);
     context.fillText(run.text, cursorX, y);
     cursorX += context.measureText(run.text).width;
@@ -4333,7 +4354,7 @@ function getCanvasTextFont(
   const weight = normalizeCanvasFontPart(fontOptions.fontWeight, "400");
   const style = normalizeCanvasFontPart(fontOptions.fontStyle, "normal");
   return emoji
-    ? `${style} ${weight} ${size}px ${emojiFonts}, ${textFonts}`
+    ? `normal 400 ${size}px ${emojiFonts}, ${textFonts}`
     : `${style} ${weight} ${size}px ${textFonts}, ${emojiFonts}`;
 }
 
@@ -4350,8 +4371,230 @@ function normalizeCanvasFontPart(value: string | undefined, fallback: string): s
   return /^[\w -]+$/u.test(clean) ? clean : fallback;
 }
 
-function isEmojiLikeChar(char: string): boolean {
-  return /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(char);
+function normalizeCanvasVisibleText(text: string): string {
+  const singleLine = text.replace(/[\r\n\t\u00A0]+/gu, " ").replace(/ {2,}/gu, " ");
+  if (isSeparatorOnlyText(singleLine)) return " · ";
+  return singleLine.trim();
+}
+
+function isSeparatorOnlyText(text: string): boolean {
+  return /^[\s\u00A0]*[·•・][\s\u00A0]*$/u.test(text);
+}
+
+function isEmojiLikeText(text: string): boolean {
+  return /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(text);
+}
+
+function measureEmojiCanvasText(text: string, size: number): number {
+  return getEmojiSegments(text).reduce((width, segment) => width + getEmojiIconAdvance(segment, size), 0);
+}
+
+function drawEmojiCanvasText(context: CanvasRenderingContext2D, text: string, x: number, baselineY: number, size: number): number {
+  let cursorX = x;
+  for (const segment of getEmojiSegments(text)) {
+    const advance = getEmojiIconAdvance(segment, size);
+    drawEmojiIcon(context, segment, cursorX, baselineY, size);
+    cursorX += advance;
+  }
+  return cursorX - x;
+}
+
+function getEmojiSegments(text: string): string[] {
+  return Array.from(
+    text.replace(/\uFE0F/gu, "").matchAll(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]|./gu),
+    (match) => match[0]
+  ).filter((segment) => segment && segment !== "\uFE0F");
+}
+
+function getEmojiIconAdvance(segment: string, size: number): number {
+  if (segment === "🔤") return size * 1.3;
+  return isEmojiLikeText(segment) ? size * 1.08 : size * 0.55;
+}
+
+function drawEmojiIcon(context: CanvasRenderingContext2D, emoji: string, x: number, baselineY: number, size: number): void {
+  if (!isEmojiLikeText(emoji)) {
+    context.fillText(emoji, x, baselineY);
+    return;
+  }
+
+  const iconSize = Math.max(7, size * 0.92);
+  const top = baselineY - iconSize * 0.84;
+  const left = x + Math.max(0, (size * 1.08 - iconSize) / 2);
+  const centerX = left + iconSize / 2;
+  const centerY = top + iconSize / 2;
+
+  context.save();
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.lineWidth = Math.max(1.1, iconSize * 0.12);
+
+  switch (emoji) {
+    case "📎":
+      context.strokeStyle = "#6b7280";
+      context.lineWidth = Math.max(1.2, iconSize * 0.13);
+      context.beginPath();
+      context.moveTo(left + iconSize * 0.36, top + iconSize * 0.25);
+      context.lineTo(left + iconSize * 0.64, top + iconSize * 0.12);
+      context.quadraticCurveTo(left + iconSize * 0.86, top + iconSize * 0.26, left + iconSize * 0.72, top + iconSize * 0.48);
+      context.lineTo(left + iconSize * 0.38, top + iconSize * 0.82);
+      context.quadraticCurveTo(left + iconSize * 0.18, top + iconSize * 0.66, left + iconSize * 0.34, top + iconSize * 0.45);
+      context.lineTo(left + iconSize * 0.58, top + iconSize * 0.22);
+      context.stroke();
+      break;
+    case "💬":
+      context.fillStyle = "#8b5cf6";
+      roundedRectPath(context, left + iconSize * 0.08, top + iconSize * 0.18, iconSize * 0.78, iconSize * 0.58, iconSize * 0.18);
+      context.fill();
+      context.beginPath();
+      context.moveTo(left + iconSize * 0.36, top + iconSize * 0.72);
+      context.lineTo(left + iconSize * 0.28, top + iconSize * 0.92);
+      context.lineTo(left + iconSize * 0.52, top + iconSize * 0.75);
+      context.fill();
+      break;
+    case "💡":
+      context.fillStyle = "#facc15";
+      context.beginPath();
+      context.arc(centerX, top + iconSize * 0.42, iconSize * 0.28, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#9ca3af";
+      roundedRectPath(context, left + iconSize * 0.36, top + iconSize * 0.68, iconSize * 0.28, iconSize * 0.18, iconSize * 0.04);
+      context.fill();
+      break;
+    case "💼":
+      context.fillStyle = "#8b5a2b";
+      roundedRectPath(context, left + iconSize * 0.12, top + iconSize * 0.34, iconSize * 0.76, iconSize * 0.48, iconSize * 0.08);
+      context.fill();
+      context.strokeStyle = "#5b3a1c";
+      context.strokeRect(left + iconSize * 0.39, top + iconSize * 0.22, iconSize * 0.22, iconSize * 0.14);
+      break;
+    case "📋":
+    case "📅":
+      context.fillStyle = "#bfdbfe";
+      roundedRectPath(context, left + iconSize * 0.18, top + iconSize * 0.12, iconSize * 0.64, iconSize * 0.78, iconSize * 0.08);
+      context.fill();
+      context.strokeStyle = "#2563eb";
+      context.stroke();
+      context.fillStyle = "#64748b";
+      context.fillRect(left + iconSize * 0.32, top + iconSize * 0.32, iconSize * 0.36, iconSize * 0.06);
+      context.fillRect(left + iconSize * 0.32, top + iconSize * 0.48, iconSize * 0.32, iconSize * 0.06);
+      break;
+    case "📚":
+      drawBook(context, left + iconSize * 0.1, top + iconSize * 0.2, iconSize * 0.2, iconSize * 0.62, "#ef4444");
+      drawBook(context, left + iconSize * 0.34, top + iconSize * 0.16, iconSize * 0.2, iconSize * 0.66, "#22c55e");
+      drawBook(context, left + iconSize * 0.58, top + iconSize * 0.24, iconSize * 0.2, iconSize * 0.58, "#3b82f6");
+      break;
+    case "🎬":
+      context.fillStyle = "#111827";
+      roundedRectPath(context, left + iconSize * 0.12, top + iconSize * 0.28, iconSize * 0.76, iconSize * 0.52, iconSize * 0.07);
+      context.fill();
+      context.strokeStyle = "#fff";
+      context.lineWidth = Math.max(0.8, iconSize * 0.08);
+      context.beginPath();
+      context.moveTo(left + iconSize * 0.2, top + iconSize * 0.42);
+      context.lineTo(left + iconSize * 0.32, top + iconSize * 0.3);
+      context.moveTo(left + iconSize * 0.45, top + iconSize * 0.42);
+      context.lineTo(left + iconSize * 0.57, top + iconSize * 0.3);
+      context.moveTo(left + iconSize * 0.7, top + iconSize * 0.42);
+      context.lineTo(left + iconSize * 0.82, top + iconSize * 0.3);
+      context.stroke();
+      break;
+    case "✅":
+    case "☑":
+      context.fillStyle = "#22c55e";
+      roundedRectPath(context, left + iconSize * 0.16, top + iconSize * 0.16, iconSize * 0.68, iconSize * 0.68, iconSize * 0.12);
+      context.fill();
+      context.strokeStyle = "#fff";
+      context.beginPath();
+      context.moveTo(left + iconSize * 0.32, top + iconSize * 0.52);
+      context.lineTo(left + iconSize * 0.46, top + iconSize * 0.66);
+      context.lineTo(left + iconSize * 0.72, top + iconSize * 0.34);
+      context.stroke();
+      break;
+    case "🎯":
+      context.fillStyle = "#ef4444";
+      context.beginPath();
+      context.arc(centerX, centerY, iconSize * 0.38, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#fff";
+      context.beginPath();
+      context.arc(centerX, centerY, iconSize * 0.24, 0, Math.PI * 2);
+      context.fill();
+      context.fillStyle = "#ef4444";
+      context.beginPath();
+      context.arc(centerX, centerY, iconSize * 0.1, 0, Math.PI * 2);
+      context.fill();
+      break;
+    case "🔤":
+      context.fillStyle = "#3b82f6";
+      roundedRectPath(context, left, top + iconSize * 0.18, iconSize * 1.15, iconSize * 0.64, iconSize * 0.08);
+      context.fill();
+      context.fillStyle = "#fff";
+      context.font = `600 ${Math.max(6, iconSize * 0.42)}px sans-serif`;
+      context.fillText("abc", left + iconSize * 0.16, baselineY - iconSize * 0.16);
+      break;
+    case "🏠":
+      context.fillStyle = "#f97316";
+      context.beginPath();
+      context.moveTo(centerX, top + iconSize * 0.16);
+      context.lineTo(left + iconSize * 0.88, top + iconSize * 0.46);
+      context.lineTo(left + iconSize * 0.76, top + iconSize * 0.46);
+      context.lineTo(left + iconSize * 0.76, top + iconSize * 0.84);
+      context.lineTo(left + iconSize * 0.24, top + iconSize * 0.84);
+      context.lineTo(left + iconSize * 0.24, top + iconSize * 0.46);
+      context.lineTo(left + iconSize * 0.12, top + iconSize * 0.46);
+      context.closePath();
+      context.fill();
+      break;
+    default:
+      context.fillStyle = getGenericEmojiColor(emoji);
+      context.beginPath();
+      context.arc(centerX, centerY, iconSize * 0.34, 0, Math.PI * 2);
+      context.fill();
+      break;
+  }
+
+  context.restore();
+}
+
+function drawBook(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, color: string): void {
+  context.fillStyle = color;
+  roundedRectPath(context, x, y, width, height, Math.max(1, width * 0.15));
+  context.fill();
+  context.fillStyle = "rgba(255,255,255,0.85)";
+  context.fillRect(x + width * 0.16, y + height * 0.18, width * 0.12, height * 0.64);
+}
+
+function roundedRectPath(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number): void {
+  const r = Math.max(0, Math.min(radius, width / 2, height / 2));
+  context.beginPath();
+  context.moveTo(x + r, y);
+  context.lineTo(x + width - r, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + r);
+  context.lineTo(x + width, y + height - r);
+  context.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  context.lineTo(x + r, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - r);
+  context.lineTo(x, y + r);
+  context.quadraticCurveTo(x, y, x + r, y);
+  context.closePath();
+}
+
+function getGenericEmojiColor(emoji: string): string {
+  switch (emoji) {
+    case "🌈":
+      return "#22c55e";
+    case "🎮":
+      return "#8b5cf6";
+    case "🧠":
+      return "#ec4899";
+    case "💻":
+    case "🖥":
+      return "#3b82f6";
+    case "🤝":
+      return "#f59e0b";
+    default:
+      return "#64748b";
+  }
 }
 
 async function imageElementToPngBytes(image: HTMLImageElement, colorMode: PdfColorMode = "color"): Promise<Uint8Array | null> {
