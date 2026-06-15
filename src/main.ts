@@ -3122,6 +3122,12 @@ function measureTextNode(textNode: Text, parent: HTMLElement, pageRect: DOMRect)
       continue;
     }
 
+    const isWhitespace = /\s/u.test(char);
+    if (isWhitespace) {
+      if (current) current.text += " ";
+      continue;
+    }
+
     const left = rect.left - pageRect.left;
     const top = rect.top - pageRect.top;
     const right = rect.right - pageRect.left;
@@ -3147,7 +3153,7 @@ function measureTextNode(textNode: Text, parent: HTMLElement, pageRect: DOMRect)
       };
     }
 
-    current.text += /\s/u.test(char) ? " " : char;
+    current.text += char;
     current.left = Math.min(current.left, left);
     current.top = Math.min(current.top, top);
     current.right = Math.max(current.right, right);
@@ -4230,7 +4236,7 @@ function drawCanvasTextLayer(
     const x = clampNumber(fragment.left, 0, options.sourceWidthPx - 4, 0);
     const y = fragment.top - options.pageTopPx + fragment.fontSizePx * 0.86;
     const measuredWidth = Math.max(1, fragment.right - fragment.left);
-    const maxWidth = Math.max(8, Math.min(options.sourceWidthPx - x - 2, measuredWidth + 2));
+    const maxWidth = Math.max(8, options.sourceWidthPx - x - 2);
     const drawn = drawCanvasText(context, fragment.text, {
       x,
       y,
@@ -4246,7 +4252,7 @@ function drawCanvasTextLayer(
       context.lineWidth = Math.max(0.65, drawn.size * 0.055);
       context.beginPath();
       context.moveTo(x, underlineY);
-      context.lineTo(x + Math.min(maxWidth, drawn.width), underlineY);
+      context.lineTo(x + Math.min(maxWidth, measuredWidth + 2, drawn.width), underlineY);
       context.stroke();
     }
   }
@@ -4264,22 +4270,74 @@ function drawCanvasText(
     colorMode: PdfColorMode;
   }
 ): { text: string; size: number; width: number } {
-  const clean = compactSeparatorSpacing(text);
+  const clean = normalizeLineText(text);
   if (!clean) return { text: "", size: options.size, width: 0 };
 
   let size = options.size;
-  context.font = `${size}px "Noto Sans SC", "Microsoft YaHei", "PingFang SC", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
-  let width = context.measureText(clean).width;
+  let runs = splitCanvasTextRuns(clean);
+  let width = measureCanvasTextRuns(context, runs, size);
   if (width > options.maxWidth) {
     size = Math.max(5, size * (options.maxWidth / width));
-    context.font = `${size}px "Noto Sans SC", "Microsoft YaHei", "PingFang SC", "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
-    width = context.measureText(clean).width;
+    runs = splitCanvasTextRuns(clean);
+    width = measureCanvasTextRuns(context, runs, size);
   }
 
   context.fillStyle = colorToCss(options.color, options.colorMode);
   context.textBaseline = "alphabetic";
-  context.fillText(clean, options.x, options.y, options.maxWidth);
+  drawCanvasTextRuns(context, runs, options.x, options.y, size);
   return { text: clean, size, width };
+}
+
+function splitCanvasTextRuns(text: string): Array<{ text: string; emoji: boolean }> {
+  const runs: Array<{ text: string; emoji: boolean }> = [];
+  for (const char of Array.from(text)) {
+    const emoji = isEmojiLikeChar(char);
+    const previous = runs[runs.length - 1];
+    if (previous && previous.emoji === emoji) {
+      previous.text += char;
+    } else {
+      runs.push({ text: char, emoji });
+    }
+  }
+  return runs;
+}
+
+function measureCanvasTextRuns(
+  context: CanvasRenderingContext2D,
+  runs: Array<{ text: string; emoji: boolean }>,
+  size: number
+): number {
+  let width = 0;
+  for (const run of runs) {
+    context.font = getCanvasTextFont(size, run.emoji);
+    width += context.measureText(run.text).width;
+  }
+  return width;
+}
+
+function drawCanvasTextRuns(
+  context: CanvasRenderingContext2D,
+  runs: Array<{ text: string; emoji: boolean }>,
+  x: number,
+  y: number,
+  size: number
+): void {
+  let cursorX = x;
+  for (const run of runs) {
+    context.font = getCanvasTextFont(size, run.emoji);
+    context.fillText(run.text, cursorX, y);
+    cursorX += context.measureText(run.text).width;
+  }
+}
+
+function getCanvasTextFont(size: number, emoji: boolean): string {
+  const textFonts = `"Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif`;
+  const emojiFonts = `"Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji"`;
+  return emoji ? `${size}px ${emojiFonts}, ${textFonts}` : `${size}px ${textFonts}, ${emojiFonts}`;
+}
+
+function isEmojiLikeChar(char: string): boolean {
+  return /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(char);
 }
 
 async function imageElementToPngBytes(image: HTMLImageElement, colorMode: PdfColorMode = "color"): Promise<Uint8Array | null> {
