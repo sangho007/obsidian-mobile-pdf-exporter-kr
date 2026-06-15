@@ -427,6 +427,7 @@ const PAGE_BREAK_PADDING_PX = 8;
 const PAGE_BREAK_MIN_ADVANCE_PX = 72;
 const SELECTABLE_PREVIEW_BACKGROUND_MIN_SCALE = 2;
 const SELECTABLE_TEXT_LAYER_OPACITY = 0.003;
+const TASK_CHECKBOX_VERTICAL_SHIFT_EM = 0.16;
 const NOTE_DOODLE_MAX_PEN_COUNT = 5;
 const NOTE_DOODLE_DEFAULT_OPACITY = 1;
 const NOTE_DOODLE_WATERCOLOR = "watercolor";
@@ -2584,7 +2585,7 @@ function captureDecorationFragments(pageEl: HTMLElement): DecorationFragment[] {
       ? textRect.top - pageRect.top + textRect.height * 0.48
       : rect.top - pageRect.top + rect.height / 2;
     const left = rect.left - pageRect.left + Math.max(0, (rect.width - size) / 2);
-    const top = centerY - size / 2 - fontSizePx * 0.03;
+    const top = centerY - size / 2 - fontSizePx * TASK_CHECKBOX_VERTICAL_SHIFT_EM;
 
     decorations.push({
       kind: "checkbox",
@@ -2609,7 +2610,7 @@ function captureDecorationFragments(pageEl: HTMLElement): DecorationFragment[] {
     const fontSizePx = parseFloat(style.fontSize) || 16;
     const size = Math.max(9, Math.min(16, fontSizePx * 0.88));
     const textLeft = firstRect.left - pageRect.left;
-    const top = firstRect.top - pageRect.top + firstRect.height * 0.48 - size / 2 - fontSizePx * 0.03;
+    const top = firstRect.top - pageRect.top + firstRect.height * 0.48 - size / 2 - fontSizePx * TASK_CHECKBOX_VERTICAL_SHIFT_EM;
     const left = Math.max(0, textLeft - fontSizePx * 1.55);
     const checkbox = item.querySelector<HTMLInputElement>("input[type='checkbox']");
     const status = getTaskStatusFromElement(checkbox ?? item);
