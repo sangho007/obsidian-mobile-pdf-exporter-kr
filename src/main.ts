@@ -62,6 +62,9 @@ interface TextFragment {
   right: number;
   bottom: number;
   fontSizePx: number;
+  fontFamily: string;
+  fontWeight: string;
+  fontStyle: string;
   color: Color;
   underline: boolean;
   href: string | null;
@@ -74,6 +77,9 @@ interface TextLineDraft {
   right: number;
   bottom: number;
   fontSizePx: number;
+  fontFamily: string;
+  fontWeight: string;
+  fontStyle: string;
   color: Color;
   underline: boolean;
   href: string | null;
@@ -869,7 +875,6 @@ export default class MobilePdfExporterPlugin extends Plugin {
       await waitForImages(pageEl, IMAGE_WAIT_TIMEOUT_MS);
       await waitForPreviewDomStable(pageEl, previewWaitProfile.finalStableMs);
       this.injectNoteDoodleOverlay(file, markdownEl);
-      tightenSeparatorTextNodes(pageEl);
       await nextAnimationFrame(FRAME_WAIT_TIMEOUT_MS);
 
       const rect = pageEl.getBoundingClientRect();
@@ -2408,47 +2413,6 @@ function isExcalidrawSourceText(text: string): boolean {
   );
 }
 
-function tightenSeparatorTextNodes(root: HTMLElement): void {
-  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const parent = node.parentElement;
-      if (!parent) return NodeFilter.FILTER_REJECT;
-      if (!node.nodeValue?.trim()) return NodeFilter.FILTER_REJECT;
-      if (!isExportableElement(parent)) return NodeFilter.FILTER_REJECT;
-      if (parent.closest("pre, code, kbd, samp, textarea")) return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    }
-  });
-
-  const textNodes: Text[] = [];
-  let node = walker.nextNode();
-  while (node) {
-    textNodes.push(node as Text);
-    node = walker.nextNode();
-  }
-
-  for (const textNode of textNodes) {
-    const original = textNode.nodeValue ?? "";
-    const tightened = tightenSeparatorText(original);
-    if (tightened !== original) textNode.nodeValue = tightened;
-  }
-}
-
-function tightenSeparatorText(text: string): string {
-  if (!text.trim() || isPdfJumpHref(text.trim())) return text;
-
-  const hasCjk = /[\u3400-\u9FFF\uF900-\uFAFF]/u.test(text);
-  const separatorCount = (text.match(/[·•・|｜/、，,;；:：#]/gu) ?? []).length;
-  const isOnlyPunctuation = /^[\s·•・|｜/、，,;；:：#()[\]（）【】<>-]+$/u.test(text);
-  const withoutUnsupportedEmoji = text.replace(/[\u{1F000}-\u{1FAFF}]\uFE0F?/gu, "");
-  if (!hasCjk && separatorCount < 1 && !isOnlyPunctuation && withoutUnsupportedEmoji === text) return text;
-
-  return withoutUnsupportedEmoji
-    .replace(/\s*([·•・|｜/、，,;；:：#])\s*/gu, "$1")
-    .replace(/\s*([()（）【】<>])\s*/gu, "$1")
-    .replace(/[ \t\u00A0]{2,}/gu, " ");
-}
-
 function captureTextFragments(pageEl: HTMLElement): TextFragment[] {
   const pageRect = pageEl.getBoundingClientRect();
   const fragments: TextFragment[] = [];
@@ -3096,6 +3060,9 @@ function measureTextNode(textNode: Text, parent: HTMLElement, pageRect: DOMRect)
         right: current.right,
         bottom: current.bottom,
         fontSizePx: current.fontSizePx,
+        fontFamily: current.fontFamily,
+        fontWeight: current.fontWeight,
+        fontStyle: current.fontStyle,
         color: current.color,
         underline: current.underline,
         href: current.href
@@ -3147,6 +3114,9 @@ function measureTextNode(textNode: Text, parent: HTMLElement, pageRect: DOMRect)
         right,
         bottom,
         fontSizePx,
+        fontFamily: style.fontFamily || "",
+        fontWeight: style.fontWeight || "400",
+        fontStyle: style.fontStyle || "normal",
         color,
         underline,
         href
@@ -3203,6 +3173,9 @@ function mergeAdjacentFragments(fragments: TextFragment[]): TextFragment[] {
       fragment.left >= previous.right - fragment.fontSizePx * 0.5 &&
       previous.underline === fragment.underline &&
       previous.href === fragment.href &&
+      previous.fontFamily === fragment.fontFamily &&
+      previous.fontWeight === fragment.fontWeight &&
+      previous.fontStyle === fragment.fontStyle &&
       colorsEqual(previous.color, fragment.color);
 
     if (!sameLine) {
@@ -4236,11 +4209,14 @@ function drawCanvasTextLayer(
     const x = clampNumber(fragment.left, 0, options.sourceWidthPx - 4, 0);
     const y = fragment.top - options.pageTopPx + fragment.fontSizePx * 0.86;
     const measuredWidth = Math.max(1, fragment.right - fragment.left);
-    const maxWidth = Math.max(8, options.sourceWidthPx - x - 2);
+    const maxWidth = Math.max(8, Math.min(options.sourceWidthPx - x - 2, measuredWidth + fragment.fontSizePx * 0.75));
     const drawn = drawCanvasText(context, fragment.text, {
       x,
       y,
       size: fontSize,
+      fontFamily: fragment.fontFamily,
+      fontWeight: fragment.fontWeight,
+      fontStyle: fragment.fontStyle,
       color: fragment.color,
       maxWidth,
       colorMode: options.colorMode
@@ -4265,6 +4241,9 @@ function drawCanvasText(
     x: number;
     y: number;
     size: number;
+    fontFamily?: string;
+    fontWeight?: string;
+    fontStyle?: string;
     color: Color;
     maxWidth: number;
     colorMode: PdfColorMode;
@@ -4275,16 +4254,16 @@ function drawCanvasText(
 
   let size = options.size;
   let runs = splitCanvasTextRuns(clean);
-  let width = measureCanvasTextRuns(context, runs, size);
+  let width = measureCanvasTextRuns(context, runs, size, options);
   if (width > options.maxWidth) {
     size = Math.max(5, size * (options.maxWidth / width));
     runs = splitCanvasTextRuns(clean);
-    width = measureCanvasTextRuns(context, runs, size);
+    width = measureCanvasTextRuns(context, runs, size, options);
   }
 
   context.fillStyle = colorToCss(options.color, options.colorMode);
   context.textBaseline = "alphabetic";
-  drawCanvasTextRuns(context, runs, options.x, options.y, size);
+  drawCanvasTextRuns(context, runs, options.x, options.y, size, options);
   return { text: clean, size, width };
 }
 
@@ -4305,11 +4284,16 @@ function splitCanvasTextRuns(text: string): Array<{ text: string; emoji: boolean
 function measureCanvasTextRuns(
   context: CanvasRenderingContext2D,
   runs: Array<{ text: string; emoji: boolean }>,
-  size: number
+  size: number,
+  fontOptions: {
+    fontFamily?: string;
+    fontWeight?: string;
+    fontStyle?: string;
+  } = {}
 ): number {
   let width = 0;
   for (const run of runs) {
-    context.font = getCanvasTextFont(size, run.emoji);
+    context.font = getCanvasTextFont(size, run.emoji, fontOptions);
     width += context.measureText(run.text).width;
   }
   return width;
@@ -4320,20 +4304,50 @@ function drawCanvasTextRuns(
   runs: Array<{ text: string; emoji: boolean }>,
   x: number,
   y: number,
-  size: number
+  size: number,
+  fontOptions: {
+    fontFamily?: string;
+    fontWeight?: string;
+    fontStyle?: string;
+  } = {}
 ): void {
   let cursorX = x;
   for (const run of runs) {
-    context.font = getCanvasTextFont(size, run.emoji);
+    context.font = getCanvasTextFont(size, run.emoji, fontOptions);
     context.fillText(run.text, cursorX, y);
     cursorX += context.measureText(run.text).width;
   }
 }
 
-function getCanvasTextFont(size: number, emoji: boolean): string {
-  const textFonts = `"Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif`;
+function getCanvasTextFont(
+  size: number,
+  emoji: boolean,
+  fontOptions: {
+    fontFamily?: string;
+    fontWeight?: string;
+    fontStyle?: string;
+  } = {}
+): string {
+  const textFonts = getCanvasFontFamily(fontOptions.fontFamily);
   const emojiFonts = `"Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji"`;
-  return emoji ? `${size}px ${emojiFonts}, ${textFonts}` : `${size}px ${textFonts}, ${emojiFonts}`;
+  const weight = normalizeCanvasFontPart(fontOptions.fontWeight, "400");
+  const style = normalizeCanvasFontPart(fontOptions.fontStyle, "normal");
+  return emoji
+    ? `${style} ${weight} ${size}px ${emojiFonts}, ${textFonts}`
+    : `${style} ${weight} ${size}px ${textFonts}, ${emojiFonts}`;
+}
+
+function getCanvasFontFamily(fontFamily?: string): string {
+  const fallback = `"Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif`;
+  const clean = (fontFamily ?? "").trim();
+  if (!clean) return fallback;
+  return `${clean}, ${fallback}`;
+}
+
+function normalizeCanvasFontPart(value: string | undefined, fallback: string): string {
+  const clean = (value ?? "").trim();
+  if (!clean) return fallback;
+  return /^[\w -]+$/u.test(clean) ? clean : fallback;
 }
 
 function isEmojiLikeChar(char: string): boolean {
