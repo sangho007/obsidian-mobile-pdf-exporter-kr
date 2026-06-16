@@ -10,7 +10,6 @@ import {
   TFile,
   normalizePath
 } from "obsidian";
-import type { SettingDefinitionItem } from "obsidian";
 import type { Color, PDFDocument, PDFFont, PDFPage } from "pdf-lib";
 
 const UI_LANGUAGES = ["auto", "zh", "en"] as const;
@@ -1605,232 +1604,186 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
     super(app, plugin);
   }
 
-  getSettingDefinitions(): SettingDefinitionItem[] {
-    return [
-      {
-        name: "Mobile PDF Exporter",
-        desc: this.plugin.t("settingsIntro")
-      },
-      {
-        type: "group",
-        heading: this.plugin.t("settingsGeneralHeading"),
-        items: [
-          {
-            name: this.plugin.t("languageName"),
-            desc: this.plugin.t("languageDesc"),
-            control: {
-              type: "dropdown",
-              key: "language",
-              defaultValue: DEFAULT_SETTINGS.language,
-              options: {
-                auto: this.plugin.t("languageAuto"),
-                zh: this.plugin.t("languageChinese"),
-                en: this.plugin.t("languageEnglish")
-              }
-            }
-          }
-        ]
-      },
-      {
-        type: "group",
-        heading: this.plugin.t("settingsNoteOptionsHeading"),
-        items: [
-          {
-            name: this.plugin.t("exportModeName"),
-            desc: this.plugin.t("exportModeDesc"),
-            control: {
-              type: "dropdown",
-              key: "noteExportMode",
-              defaultValue: DEFAULT_SETTINGS.noteExportMode,
-              options: {
-                selectable: this.plugin.t("exportModeSelectable"),
-                image: this.plugin.t("exportModeImage")
-              }
-            }
-          },
-          {
-            name: this.plugin.t("pageSizeName"),
-            desc: this.plugin.t("pageSizeDesc"),
-            control: {
-              type: "dropdown",
-              key: "pagePreset",
-              defaultValue: DEFAULT_SETTINGS.pagePreset,
-              options: Object.fromEntries(
-                PDF_PAGE_PRESETS.map((preset) => [preset, getPageLabel(preset, this.plugin.getResolvedLanguage())])
-              )
-            }
-          },
-          {
-            name: this.plugin.t("orientationName"),
-            desc: this.plugin.t("orientationDesc"),
-            control: {
-              type: "dropdown",
-              key: "pageOrientation",
-              defaultValue: DEFAULT_SETTINGS.pageOrientation,
-              options: {
-                portrait: this.plugin.t("orientationPortrait"),
-                landscape: this.plugin.t("orientationLandscape")
-              }
-            }
-          },
-          {
-            name: this.plugin.t("colorName"),
-            desc: this.plugin.t("colorDesc"),
-            control: {
-              type: "dropdown",
-              key: "colorMode",
-              defaultValue: DEFAULT_SETTINGS.colorMode,
-              options: {
-                color: this.plugin.t("colorOption"),
-                grayscale: this.plugin.t("grayscaleOption")
-              }
-            }
-          },
-          {
-            name: this.plugin.t("marginName"),
-            desc: `${this.plugin.settings.marginMm} mm`,
-            control: {
-              type: "slider",
-              key: "marginMm",
-              defaultValue: DEFAULT_SETTINGS.marginMm,
-              min: 0,
-              max: 18,
-              step: 1
-            }
-          },
-          {
-            name: this.plugin.t("contentScaleName"),
-            desc: `${this.plugin.settings.contentScalePercent}%`,
-            control: {
-              type: "slider",
-              key: "contentScalePercent",
-              defaultValue: DEFAULT_SETTINGS.contentScalePercent,
-              min: 80,
-              max: 125,
-              step: 5
-            }
-          },
-          {
-            name: this.plugin.t("imageQualityName"),
-            desc: this.plugin.t("imageQualityDesc"),
-            control: {
-              type: "dropdown",
-              key: "imageRasterScale",
-              defaultValue: String(DEFAULT_SETTINGS.imageRasterScale),
-              options: {
-                "1": this.plugin.t("imageQualityStandard"),
-                "1.5": this.plugin.t("imageQualityClear"),
-                "2": this.plugin.t("imageQualityHigh"),
-                "3": this.plugin.t("imageQualityUltra")
-              }
-            }
-          },
-          {
-            name: this.plugin.t("includeTitleName"),
-            control: {
-              type: "toggle",
-              key: "includeTitle",
-              defaultValue: DEFAULT_SETTINGS.includeTitle
-            }
-          }
-        ]
-      },
-      {
-        type: "group",
-        heading: this.plugin.t("settingsSaveAndShareHeading"),
-        items: [
-          {
-            name: this.plugin.t("outputFolderName"),
-            desc: this.plugin.t("outputFolderDesc"),
-            control: {
-              type: "text",
-              key: "outputFolder",
-              defaultValue: DEFAULT_SETTINGS.outputFolder,
-              placeholder: DEFAULT_SETTINGS.outputFolder
-            }
-          },
-          {
-            name: this.plugin.t("openAfterExportName"),
-            control: {
-              type: "toggle",
-              key: "openAfterExport",
-              defaultValue: DEFAULT_SETTINGS.openAfterExport
-            }
-          },
-          {
-            name: this.plugin.t("shareAfterExportName"),
-            control: {
-              type: "toggle",
-              key: "shareAfterExport",
-              defaultValue: DEFAULT_SETTINGS.shareAfterExport
-            }
-          },
-          {
-            name: this.plugin.t("codesTitle"),
-            desc: this.plugin.t("codesSubtitle"),
-            render: (setting) => {
-              const codesContainer = appendElement(setting.controlEl, "div", {
-                cls: "mobile-pdf-exporter-settings-codes"
-              });
-              void this.renderExtraCodes(codesContainer);
-            }
-          }
-        ]
-      }
-    ];
-  }
+  display(): void {
+    const { containerEl } = this;
+    containerEl.replaceChildren();
+    appendElement(containerEl, "h2", { text: "Mobile PDF Exporter" });
+    appendElement(containerEl, "p", { text: this.plugin.t("settingsIntro") });
 
-  getControlValue(key: string): unknown {
-    return this.plugin.settings[key as keyof MobilePdfExporterSettings];
-  }
+    appendElement(containerEl, "h3", { text: this.plugin.t("settingsGeneralHeading") });
 
-  async setControlValue(key: string, value: unknown): Promise<void> {
-    switch (key) {
-      case "language":
-        this.plugin.settings.language = normalizeChoice(value, UI_LANGUAGES, DEFAULT_SETTINGS.language);
-        await this.plugin.saveSettings();
-        this.plugin.refreshLocalizedActions();
-        this.update();
-        return;
-      case "noteExportMode":
-        this.plugin.settings.noteExportMode = normalizeChoice(value, NOTE_PDF_EXPORT_MODES, DEFAULT_SETTINGS.noteExportMode);
-        break;
-      case "pagePreset":
-        this.plugin.settings.pagePreset = normalizeChoice(value, PDF_PAGE_PRESETS, DEFAULT_SETTINGS.pagePreset);
-        break;
-      case "pageOrientation":
-        this.plugin.settings.pageOrientation = normalizeChoice(value, PDF_ORIENTATIONS, DEFAULT_SETTINGS.pageOrientation);
-        break;
-      case "colorMode":
-        this.plugin.settings.colorMode = normalizeChoice(value, PDF_COLOR_MODES, DEFAULT_SETTINGS.colorMode);
-        break;
-      case "marginMm":
-        this.plugin.settings.marginMm = clampNumber(value, 0, 18, DEFAULT_SETTINGS.marginMm);
-        this.update();
-        break;
-      case "contentScalePercent":
-        this.plugin.settings.contentScalePercent = clampNumber(value, 80, 125, DEFAULT_SETTINGS.contentScalePercent);
-        this.update();
-        break;
-      case "imageRasterScale":
-        this.plugin.settings.imageRasterScale = clampNumber(Number.parseFloat(String(value)), 1, 3, DEFAULT_SETTINGS.imageRasterScale);
-        break;
-      case "includeTitle":
-        this.plugin.settings.includeTitle = typeof value === "boolean" ? value : DEFAULT_SETTINGS.includeTitle;
-        break;
-      case "outputFolder":
-        this.plugin.settings.outputFolder = typeof value === "string" && value.trim() ? value.trim() : DEFAULT_SETTINGS.outputFolder;
-        break;
-      case "openAfterExport":
-        this.plugin.settings.openAfterExport = typeof value === "boolean" ? value : DEFAULT_SETTINGS.openAfterExport;
-        break;
-      case "shareAfterExport":
-        this.plugin.settings.shareAfterExport = typeof value === "boolean" ? value : DEFAULT_SETTINGS.shareAfterExport;
-        break;
-      default:
-        return;
-    }
-    await this.plugin.saveSettings();
+    new Setting(containerEl)
+      .setName(this.plugin.t("languageName"))
+      .setDesc(this.plugin.t("languageDesc"))
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("auto", this.plugin.t("languageAuto"))
+          .addOption("zh", this.plugin.t("languageChinese"))
+          .addOption("en", this.plugin.t("languageEnglish"))
+          .setValue(this.plugin.settings.language)
+          .onChange(async (value) => {
+            this.plugin.settings.language = normalizeChoice(value, UI_LANGUAGES, DEFAULT_SETTINGS.language);
+            await this.plugin.saveSettings();
+            this.plugin.refreshLocalizedActions();
+            this.display();
+          });
+      });
+
+    appendElement(containerEl, "h3", { text: this.plugin.t("settingsNoteOptionsHeading") });
+
+    new Setting(containerEl)
+      .setName(this.plugin.t("exportModeName"))
+      .setDesc(this.plugin.t("exportModeDesc"))
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("selectable", this.plugin.t("exportModeSelectable"))
+          .addOption("image", this.plugin.t("exportModeImage"))
+          .setValue(this.plugin.settings.noteExportMode)
+          .onChange(async (value) => {
+            this.plugin.settings.noteExportMode = normalizeChoice(value, NOTE_PDF_EXPORT_MODES, DEFAULT_SETTINGS.noteExportMode);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName(this.plugin.t("pageSizeName"))
+      .setDesc(this.plugin.t("pageSizeDesc"))
+      .addDropdown((dropdown) => {
+        for (const preset of PDF_PAGE_PRESETS) dropdown.addOption(preset, getPageLabel(preset, this.plugin.getResolvedLanguage()));
+        dropdown
+          .setValue(this.plugin.settings.pagePreset)
+          .onChange(async (value) => {
+            this.plugin.settings.pagePreset = normalizeChoice(value, PDF_PAGE_PRESETS, DEFAULT_SETTINGS.pagePreset);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName(this.plugin.t("orientationName"))
+      .setDesc(this.plugin.t("orientationDesc"))
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("portrait", this.plugin.t("orientationPortrait"))
+          .addOption("landscape", this.plugin.t("orientationLandscape"))
+          .setValue(this.plugin.settings.pageOrientation)
+          .onChange(async (value) => {
+            this.plugin.settings.pageOrientation = normalizeChoice(value, PDF_ORIENTATIONS, DEFAULT_SETTINGS.pageOrientation);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName(this.plugin.t("colorName"))
+      .setDesc(this.plugin.t("colorDesc"))
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("color", this.plugin.t("colorOption"))
+          .addOption("grayscale", this.plugin.t("grayscaleOption"))
+          .setValue(this.plugin.settings.colorMode)
+          .onChange(async (value) => {
+            this.plugin.settings.colorMode = normalizeChoice(value, PDF_COLOR_MODES, DEFAULT_SETTINGS.colorMode);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    const marginSetting = new Setting(containerEl)
+      .setName(this.plugin.t("marginName"))
+      .setDesc(`${this.plugin.settings.marginMm} mm`);
+    marginSetting.addSlider((slider) => {
+      slider
+        .setLimits(0, 18, 1)
+        .setDynamicTooltip()
+        .setValue(this.plugin.settings.marginMm)
+        .onChange(async (value) => {
+          this.plugin.settings.marginMm = value;
+          marginSetting.setDesc(`${value} mm`);
+          await this.plugin.saveSettings();
+        });
+    });
+
+    const scaleSetting = new Setting(containerEl)
+      .setName(this.plugin.t("contentScaleName"))
+      .setDesc(`${this.plugin.settings.contentScalePercent}%`);
+    scaleSetting.addSlider((slider) => {
+      slider
+        .setLimits(80, 125, 5)
+        .setDynamicTooltip()
+        .setValue(this.plugin.settings.contentScalePercent)
+        .onChange(async (value) => {
+          this.plugin.settings.contentScalePercent = value;
+          scaleSetting.setDesc(`${value}%`);
+          await this.plugin.saveSettings();
+        });
+    });
+
+    new Setting(containerEl)
+      .setName(this.plugin.t("imageQualityName"))
+      .setDesc(this.plugin.t("imageQualityDesc"))
+      .addDropdown((dropdown) => {
+        dropdown
+          .addOption("1", this.plugin.t("imageQualityStandard"))
+          .addOption("1.5", this.plugin.t("imageQualityClear"))
+          .addOption("2", this.plugin.t("imageQualityHigh"))
+          .addOption("3", this.plugin.t("imageQualityUltra"))
+          .setValue(String(this.plugin.settings.imageRasterScale))
+          .onChange(async (value) => {
+            this.plugin.settings.imageRasterScale = clampNumber(Number.parseFloat(value), 1, 3, DEFAULT_SETTINGS.imageRasterScale);
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName(this.plugin.t("includeTitleName"))
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.plugin.settings.includeTitle)
+          .onChange(async (value) => {
+            this.plugin.settings.includeTitle = value;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    appendElement(containerEl, "h3", { text: this.plugin.t("settingsSaveAndShareHeading") });
+
+    new Setting(containerEl)
+      .setName(this.plugin.t("outputFolderName"))
+      .setDesc(this.plugin.t("outputFolderDesc"))
+      .addText((text) => {
+        text
+          .setPlaceholder(DEFAULT_SETTINGS.outputFolder)
+          .setValue(this.plugin.settings.outputFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.outputFolder = value.trim() || DEFAULT_SETTINGS.outputFolder;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName(this.plugin.t("openAfterExportName"))
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.plugin.settings.openAfterExport)
+          .onChange(async (value) => {
+            this.plugin.settings.openAfterExport = value;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    new Setting(containerEl)
+      .setName(this.plugin.t("shareAfterExportName"))
+      .addToggle((toggle) => {
+        toggle
+          .setValue(this.plugin.settings.shareAfterExport)
+          .onChange(async (value) => {
+            this.plugin.settings.shareAfterExport = value;
+            await this.plugin.saveSettings();
+          });
+      });
+
+    const codesContainer = appendElement(containerEl, "div", {
+      cls: "mobile-pdf-exporter-settings-codes"
+    });
+    void this.renderExtraCodes(codesContainer);
   }
 
   private async renderExtraCodes(containerEl: HTMLElement): Promise<void> {
