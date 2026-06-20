@@ -344,6 +344,12 @@
   width: 132px;
 }
 
+.mobile-pdf-exporter-settings-code-link {
+  display: block;
+  width: 132px;
+  height: 132px;
+}
+
 .mobile-pdf-exporter-settings-code-image {
   display: block;
   width: 132px;

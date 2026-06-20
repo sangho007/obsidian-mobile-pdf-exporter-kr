@@ -7,6 +7,7 @@ One-click preview-style PDF export for Obsidian mobile and desktop.
 - Adds one ribbon button, one command, and one note menu item. The title follows the configured interface language.
 - Shows a PDF export options panel before exporting, so each export can choose common PDF settings.
 - Supports Auto / Chinese / English UI text for export buttons, menus, commands, options, settings, and export prompts.
+- Shows embedded support QR codes in the plugin settings without extra release assets.
 - Exports the current Markdown preview to a phone-width PDF.
 - Keeps text selectable/copyable by writing a real PDF text layer.
 - Adds ordinary-note PDF options for page size, orientation, color/grayscale, margin, content scale, selectable-text PDF, and image PDF.
@@ -57,6 +58,11 @@ Markor creates PDF through Android WebView printing, so its preview PDF text is 
 The exporter uses the rendered preview DOM as the layout source, then writes a real PDF text layer. For CJK text, it first tries local full font files and otherwise lazily decodes the embedded common-CJK subset only when exporting.
 
 ## Changelog
+
+### 0.3.52
+
+- Embeds the two support QR codes directly into `main.js`, so the settings page can show them after standard community-browser installs.
+- Keeps the GitHub release layout to the standard Obsidian assets only: `manifest.json`, `main.js`, and `styles.css`.
 
 ### 0.3.51
 
