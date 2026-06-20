@@ -11,6 +11,7 @@ import {
   normalizePath
 } from "obsidian";
 import type { Color, PDFDocument, PDFFont, PDFPage } from "pdf-lib";
+import embeddedCjkFontBase64 from "../fonts/NotoSansSC-Regular.gb2312-subset.ttf";
 
 const UI_LANGUAGES = ["auto", "zh", "en"] as const;
 type UiLanguage = typeof UI_LANGUAGES[number];
@@ -486,6 +487,8 @@ interface ExportFont {
 let pdfRuntimePromise: Promise<PdfRuntime> | null = null;
 let pdfStringRuntime: PdfLibRuntime["PDFString"] | null = null;
 let exportableElementCache: WeakMap<Element, boolean> | null = null;
+let embeddedCjkFontBytesPromise: Promise<ArrayBuffer> | null = null;
+const pdfCharEncodingCache = new WeakMap<PDFFont, Map<string, boolean>>();
 let rgb: PdfLibRuntime["rgb"] = ((red: number, green: number, blue: number) => ({
   type: "RGB",
   red,
@@ -516,6 +519,22 @@ function getPdfStringRuntime(): PdfLibRuntime["PDFString"] {
     throw new Error("PDF 引擎尚未加载。");
   }
   return pdfStringRuntime;
+}
+
+async function loadEmbeddedCjkFontBytes(): Promise<ArrayBuffer> {
+  if (!embeddedCjkFontBytesPromise) {
+    embeddedCjkFontBytesPromise = Promise.resolve(base64ToArrayBuffer(embeddedCjkFontBase64));
+  }
+  return embeddedCjkFontBytesPromise;
+}
+
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
 }
 
 export default class MobilePdfExporterPlugin extends Plugin {
@@ -607,9 +626,6 @@ export default class MobilePdfExporterPlugin extends Plugin {
   warmupExportRuntime(): void {
     void loadPdfRuntime().catch((error) => {
       console.warn("Mobile PDF Exporter PDF runtime warmup failed", error);
-    });
-    void this.loadFontBytes().catch((error) => {
-      console.warn("Mobile PDF Exporter font warmup failed", error);
     });
   }
 
@@ -1161,6 +1177,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
       this.fontBytesPromise = this.app.vault.adapter
         .readBinary(this.getPluginAssetPath("fonts/SimHei.ttf"))
         .catch(() => this.app.vault.adapter.readBinary(this.getPluginAssetPath("fonts/NotoSansSC-Regular.otf")))
+        .catch(() => loadEmbeddedCjkFontBytes())
         .catch(() => {
           throw new Error(this.t("fontMissingError"));
         });
@@ -3246,7 +3263,7 @@ function getEncodablePdfText(font: PDFFont, text: string): string {
   const asciiFallback = text.replace(/[^\u0020-\u007E]/gu, "");
   if (asciiFallback && canEncodePdfText(font, asciiFallback)) return asciiFallback;
 
-  return "";
+  return filterEncodablePdfChars(font, text);
 }
 
 function canEncodePdfText(font: PDFFont, text: string): boolean {
@@ -3256,6 +3273,28 @@ function canEncodePdfText(font: PDFFont, text: string): boolean {
   } catch {
     return false;
   }
+}
+
+function filterEncodablePdfChars(font: PDFFont, text: string): string {
+  let filtered = "";
+  for (const char of text) {
+    if (canEncodePdfChar(font, char)) filtered += char;
+  }
+  return filtered.trim();
+}
+
+function canEncodePdfChar(font: PDFFont, char: string): boolean {
+  let cache = pdfCharEncodingCache.get(font);
+  if (!cache) {
+    cache = new Map<string, boolean>();
+    pdfCharEncodingCache.set(font, cache);
+  }
+
+  const cached = cache.get(char);
+  if (cached !== undefined) return cached;
+  const encodable = canEncodePdfText(font, char);
+  cache.set(char, encodable);
+  return encodable;
 }
 
 function drawLinkAnnotationLayer(

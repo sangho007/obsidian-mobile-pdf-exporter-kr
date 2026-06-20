@@ -1,4 +1,9 @@
 declare module "*.otf" {
-  const base64: string;
-  export default base64;
+  const content: string;
+  export default content;
+}
+
+declare module "*.ttf" {
+  const content: string;
+  export default content;
 }

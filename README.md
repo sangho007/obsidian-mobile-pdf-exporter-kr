@@ -16,7 +16,7 @@ One-click preview-style PDF export for Obsidian mobile and desktop.
 - Draws link color/underlines, task checkboxes, list bullets, ordered-list markers, and small SVG icons from the rendered preview.
 - Avoids page breaks inside images, list items, paragraphs, code blocks, tables, quotes, embeds, and callouts when they can fit on one page.
 - Exports direct `.excalidraw.md` files as pure image PDFs through the Excalidraw runtime, with automatic lower-resolution retries and page slicing for large drawings.
-- Bundles `NotoSansSC-Regular.otf` for offline Chinese text export.
+- Embeds a lightweight common-CJK font subset so community-browser installs can copy common Chinese text without extra files.
 
 ## Install
 
@@ -32,8 +32,6 @@ The plugin folder should contain:
 manifest.json
 main.js
 styles.css
-README.md
-versions.json
 ```
 
 Restart Obsidian, or disable and re-enable the plugin from Obsidian settings.
@@ -44,7 +42,7 @@ You can also install this repo through BRAT while it is waiting for inclusion in
 
 To appear in Obsidian's built-in Community plugins browser, this plugin must be submitted to `obsidianmd/obsidian-releases` and pass review. The release used for review should attach the standard Obsidian plugin assets directly: `manifest.json`, `main.js`, and `styles.css`.
 
-The manual full ZIP includes `fonts/NotoSansSC-Regular.otf` for selectable Chinese text export. If a direct community-browser install does not include that font asset, ordinary English/Latin exports fall back to a standard PDF font, while best CJK export quality still comes from the full release package.
+The standard community-browser assets include a lightweight embedded common-CJK font subset inside `main.js`, so common Chinese text stays selectable/copyable without installing extra files. A manually installed full font at `fonts/NotoSansSC-Regular.otf` or `fonts/SimHei.ttf` is still used first when present for broader CJK coverage.
 
 ## Usage
 
@@ -56,9 +54,16 @@ The interface language can be set to Auto, Chinese, or English in the plugin set
 
 Markor creates PDF through Android WebView printing, so its preview PDF text is selectable. Obsidian plugins do not expose Android native printing, so this plugin uses the closest available browser-side approach: render the Obsidian preview layout, then write real PDF text and images at matching positions.
 
-The release package includes `fonts/NotoSansSC-Regular.otf` for selectable Chinese text export. The font is read only when exporting, so `main.js` stays smaller and Obsidian startup avoids parsing an embedded font string.
+The exporter uses the rendered preview DOM as the layout source, then writes a real PDF text layer. For CJK text, it first tries local full font files and otherwise lazily decodes the embedded common-CJK subset only when exporting.
 
 ## Changelog
+
+### 0.3.51
+
+- Embeds a lightweight common-CJK font subset in `main.js`, so standard community-browser installs can copy common Chinese text without separate font files.
+- Keeps full local font files as the first choice when available for broader CJK coverage.
+- Stops warming up font bytes when opening the options panel; the embedded subset is decoded only during export.
+- Filters unsupported characters per character, so one rare unsupported glyph no longer drops the rest of the line from the PDF text layer.
 
 ### 0.3.40
 

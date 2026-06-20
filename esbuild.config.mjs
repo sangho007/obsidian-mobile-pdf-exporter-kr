@@ -30,7 +30,8 @@ const context = await esbuild.context({
   ],
   format: "cjs",
   loader: {
-    ".otf": "base64"
+    ".otf": "base64",
+    ".ttf": "base64"
   },
   logLevel: "info",
   minify: prod,
