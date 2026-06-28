@@ -58,6 +58,11 @@ The exporter uses the rendered preview DOM as the layout source, then writes a r
 
 ## Changelog
 
+### 0.3.54
+
+- Restores the two embedded support QR images in the settings page while keeping the embedded CJK font subset out of the startup bundle.
+- Keeps the release layout to the standard Obsidian assets: `manifest.json`, `main.js`, and `styles.css`.
+
 ### 0.3.53
 
 - Reduces the startup `main.js` bundle by removing the embedded CJK font subset and embedded support QR images.

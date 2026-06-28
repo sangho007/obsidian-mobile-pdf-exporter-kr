@@ -11,6 +11,8 @@ import {
   normalizePath
 } from "obsidian";
 import type { Color, PDFDocument, PDFFont, PDFPage } from "pdf-lib";
+import supportCode1Base64 from "./generated/support-code-1.jpg";
+import supportCode2Base64 from "./generated/support-code-2.png";
 
 const UI_LANGUAGES = ["auto", "zh", "en"] as const;
 type UiLanguage = typeof UI_LANGUAGES[number];
@@ -426,8 +428,8 @@ const NOTE_DOODLE_MAX_PEN_COUNT = 5;
 const NOTE_DOODLE_DEFAULT_OPACITY = 1;
 const NOTE_DOODLE_WATERCOLOR = "watercolor";
 const SETTINGS_EXTRA_CODE_ASSETS = [
-  { path: "extras/code-1.jpg", label: "给我买咖啡 / Buy me a coffee" },
-  { path: "extras/code-2.png", label: "支持继续维护 / Support this tool" }
+  { src: `data:image/jpeg;base64,${supportCode1Base64}`, label: "给我买咖啡 / Buy me a coffee", fileName: "buy-me-a-coffee.jpg" },
+  { src: `data:image/png;base64,${supportCode2Base64}`, label: "支持继续维护 / Support this tool", fileName: "support-this-tool.png" }
 ] as const;
 
 function resolveUiLanguage(language: UiLanguage): ResolvedUiLanguage {
@@ -1781,24 +1783,10 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
     const codesContainer = appendElement(containerEl, "div", {
       cls: "mobile-pdf-exporter-settings-codes"
     });
-    void this.renderExtraCodes(codesContainer);
+    this.renderExtraCodes(codesContainer);
   }
 
-  private async renderExtraCodes(containerEl: HTMLElement): Promise<void> {
-    const codeItems = (
-      await Promise.all(
-        SETTINGS_EXTRA_CODE_ASSETS.map(async (asset) => {
-          const src = await this.plugin.getOptionalAssetResourcePath(asset.path);
-          return src ? { ...asset, src } : null;
-        })
-      )
-    ).filter((item): item is NonNullable<typeof item> => item !== null);
-
-    if (codeItems.length === 0) {
-      containerEl.remove();
-      return;
-    }
-
+  private renderExtraCodes(containerEl: HTMLElement): void {
     appendElement(containerEl, "div", {
       cls: "mobile-pdf-exporter-settings-codes-title",
       text: this.plugin.t("codesTitle")
@@ -1812,16 +1800,25 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
       cls: "mobile-pdf-exporter-settings-codes-grid"
     });
 
-    for (const item of codeItems) {
+    for (const item of SETTINGS_EXTRA_CODE_ASSETS) {
       const codeEl = appendElement(gridEl, "div", {
         cls: "mobile-pdf-exporter-settings-code"
       });
-      const imageEl = appendElement(codeEl, "img", {
+      const linkEl = appendElement(codeEl, "a", {
+        cls: "mobile-pdf-exporter-settings-code-link"
+      });
+      linkEl.href = item.src;
+      linkEl.target = "_blank";
+      linkEl.rel = "noopener";
+      linkEl.setAttribute("download", item.fileName);
+      linkEl.setAttribute("aria-label", item.label);
+      const imageEl = appendElement(linkEl, "img", {
         cls: "mobile-pdf-exporter-settings-code-image"
       });
       imageEl.src = item.src;
       imageEl.alt = item.label;
       imageEl.loading = "lazy";
+      imageEl.decoding = "async";
       appendElement(codeEl, "div", {
         cls: "mobile-pdf-exporter-settings-code-label",
         text: item.label
