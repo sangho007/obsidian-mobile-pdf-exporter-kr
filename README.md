@@ -34,7 +34,7 @@ main.js
 styles.css
 ```
 
-For selectable Chinese PDF export, version 0.3.55 can download and cache the CJK subset font from the matching GitHub tag on first export. For offline manual installs, also place `NotoSansSC-Regular.gb2312-subset.ttf` at:
+For selectable Chinese PDF export, version 0.3.56 can download and cache the CJK subset font from GitHub/CDN on first export. For offline manual installs, also place `NotoSansSC-Regular.gb2312-subset.ttf` at:
 
 ```text
 <your-vault>/.obsidian/plugins/mobile-pdf-exporter/fonts/NotoSansSC-Regular.gb2312-subset.ttf
@@ -63,6 +63,11 @@ Markor creates PDF through Android WebView printing, so its preview PDF text is 
 The exporter uses the rendered preview DOM as the layout source, then writes a real PDF text layer. For CJK text, it tries local font files first, then downloads the tagged CJK subset font on demand, and otherwise falls back to a standard PDF font.
 
 ## Changelog
+
+### 0.3.56
+
+- Adds fallback CJK font download URLs, so export can retry jsDelivr and the `main` branch font if the version-tag raw URL is temporarily unavailable.
+- Keeps the startup bundle small and still loads the CJK font only during export.
 
 ### 0.3.55
 

@@ -430,6 +430,7 @@ const NOTE_DOODLE_DEFAULT_OPACITY = 1;
 const NOTE_DOODLE_WATERCOLOR = "watercolor";
 const CJK_FONT_ASSET_FILE = "NotoSansSC-Regular.gb2312-subset.ttf";
 const CJK_FONT_RAW_ASSET_URL_BASE = "https://raw.githubusercontent.com/arias007/obsidian-mobile-pdf-exporter";
+const CJK_FONT_JSDELIVR_URL_BASE = "https://cdn.jsdelivr.net/gh/arias007/obsidian-mobile-pdf-exporter";
 const LOCAL_CJK_FONT_CANDIDATES = [
   `fonts/${CJK_FONT_ASSET_FILE}`,
   CJK_FONT_ASSET_FILE,
@@ -1203,12 +1204,30 @@ export default class MobilePdfExporterPlugin extends Plugin {
   }
 
   private async downloadRemoteFontBytes(): Promise<ArrayBuffer> {
-    const url = `${CJK_FONT_RAW_ASSET_URL_BASE}/${encodeURIComponent(this.manifest.version)}/fonts/${encodeURIComponent(CJK_FONT_ASSET_FILE)}`;
-    const response = await requestUrl({ url, method: "GET" });
-    if (response.status < 200 || response.status >= 300) {
-      throw new Error(`Font download failed with HTTP ${response.status}.`);
+    let lastError: unknown = null;
+    for (const url of this.getRemoteFontUrls()) {
+      try {
+        const response = await requestUrl({ url, method: "GET" });
+        if (response.status < 200 || response.status >= 300) {
+          throw new Error(`Font download failed with HTTP ${response.status}.`);
+        }
+        return response.arrayBuffer;
+      } catch (error) {
+        lastError = error;
+      }
     }
-    return response.arrayBuffer;
+    throw lastError ?? new Error("Font download failed.");
+  }
+
+  private getRemoteFontUrls(): string[] {
+    const fontPath = `fonts/${encodeURIComponent(CJK_FONT_ASSET_FILE)}`;
+    const version = encodeURIComponent(this.manifest.version);
+    return [
+      `${CJK_FONT_RAW_ASSET_URL_BASE}/${version}/${fontPath}`,
+      `${CJK_FONT_JSDELIVR_URL_BASE}@${version}/${fontPath}`,
+      `${CJK_FONT_RAW_ASSET_URL_BASE}/main/${fontPath}`,
+      `${CJK_FONT_JSDELIVR_URL_BASE}@main/${fontPath}`
+    ];
   }
 
   private async cacheRemoteFontBytes(fontBytes: ArrayBuffer): Promise<void> {
