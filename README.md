@@ -34,7 +34,7 @@ main.js
 styles.css
 ```
 
-For selectable Chinese PDF export, version 0.3.57 includes a gzip-compressed CJK subset font and decompresses it only during export. If embedded decompression is unavailable, it can still download and cache the CJK subset font from GitHub/CDN. For offline manual installs, also place `NotoSansSC-Regular.gb2312-subset.ttf` at:
+For selectable Chinese PDF export, version 0.3.57 includes a gzip-compressed CJK subset font and decompresses it only during the first export that needs Chinese text. The first export can take about half a minute while the font is decompressed and cached; later exports should be faster because the cached font is reused. If embedded decompression is unavailable, it can still download and cache the CJK subset font from GitHub/CDN. For offline manual installs, also place `NotoSansSC-Regular.gb2312-subset.ttf` at:
 
 ```text
 <your-vault>/.obsidian/plugins/mobile-pdf-exporter/fonts/NotoSansSC-Regular.gb2312-subset.ttf
@@ -67,7 +67,7 @@ The exporter uses the rendered preview DOM as the layout source, then writes a r
 ### 0.3.57
 
 - Adds a 0.3.52-style self-contained CJK experiment using an embedded gzip-compressed Unicode CJK subset font.
-- Decompresses the embedded font only during export, then falls back to local/remote font loading if the WebView does not support gzip decompression.
+- Decompresses the embedded font only during the first export that needs Chinese text, then caches it for later exports.
 - Keeps the two embedded support QR images from 0.3.54.
 
 ### 0.3.56
