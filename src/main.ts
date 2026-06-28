@@ -8,7 +8,8 @@ import {
   PluginSettingTab,
   Setting,
   TFile,
-  normalizePath
+  normalizePath,
+  requestUrl
 } from "obsidian";
 import type { Color, PDFDocument, PDFFont, PDFPage } from "pdf-lib";
 import supportCode1Base64 from "./generated/support-code-1.jpg";
@@ -300,7 +301,7 @@ const UI_TEXT = {
     codesTitle: "给我买咖啡",
     codesSubtitle: "如果这个插件帮到你，可以扫码打赏支持继续维护。",
     shareFailedNotice: "PDF 已保存，但系统分享面板没有打开。",
-    fontMissingError: "缺少 PDF 中文字体文件，请重新安装插件包中的 fonts/NotoSansSC-Regular.otf。",
+    fontMissingError: "缺少 PDF 中文字体，且无法从 GitHub 下载字体。请联网后重试，或把 NotoSansSC-Regular.gb2312-subset.ttf 放入插件目录的 fonts 文件夹。",
     uniqueFileNameError: "无法生成唯一 PDF 文件名。",
     excalidrawApiMissingError: "没有找到 Excalidraw 导出接口，请确认 Excalidraw 插件已启用。",
     excalidrawExportFailedError: "Excalidraw 图片过大或导出失败，已尝试降低分辨率和分页切片。",
@@ -361,7 +362,7 @@ const UI_TEXT = {
     codesTitle: "Buy me a coffee",
     codesSubtitle: "If this tool helps, tips are appreciated and support ongoing maintenance.",
     shareFailedNotice: "The PDF was saved, but the system share sheet did not open.",
-    fontMissingError: "Missing PDF font file. Reinstall the plugin package with fonts/NotoSansSC-Regular.otf.",
+    fontMissingError: "Missing PDF font, and the plugin could not download it from GitHub. Try again online, or place NotoSansSC-Regular.gb2312-subset.ttf in the plugin fonts folder.",
     uniqueFileNameError: "Could not generate a unique PDF filename.",
     excalidrawApiMissingError: "Excalidraw export API was not found. Make sure the Excalidraw plugin is enabled.",
     excalidrawExportFailedError: "The Excalidraw image was too large or export failed. Lower resolutions and page slicing were already tried.",
@@ -427,6 +428,14 @@ const TASK_CHECKBOX_VERTICAL_SHIFT_EM = 0.22;
 const NOTE_DOODLE_MAX_PEN_COUNT = 5;
 const NOTE_DOODLE_DEFAULT_OPACITY = 1;
 const NOTE_DOODLE_WATERCOLOR = "watercolor";
+const CJK_FONT_ASSET_FILE = "NotoSansSC-Regular.gb2312-subset.ttf";
+const CJK_FONT_RAW_ASSET_URL_BASE = "https://raw.githubusercontent.com/arias007/obsidian-mobile-pdf-exporter";
+const LOCAL_CJK_FONT_CANDIDATES = [
+  `fonts/${CJK_FONT_ASSET_FILE}`,
+  CJK_FONT_ASSET_FILE,
+  "fonts/SimHei.ttf",
+  "fonts/NotoSansSC-Regular.otf"
+] as const;
 const SETTINGS_EXTRA_CODE_ASSETS = [
   { src: `data:image/jpeg;base64,${supportCode1Base64}`, label: "给我买咖啡 / Buy me a coffee", fileName: "buy-me-a-coffee.jpg" },
   { src: `data:image/png;base64,${supportCode2Base64}`, label: "支持继续维护 / Support this tool", fileName: "support-this-tool.png" }
@@ -1158,14 +1167,61 @@ export default class MobilePdfExporterPlugin extends Plugin {
 
   private async loadFontBytes(): Promise<ArrayBuffer> {
     if (!this.fontBytesPromise) {
-      this.fontBytesPromise = this.app.vault.adapter
-        .readBinary(this.getPluginAssetPath("fonts/SimHei.ttf"))
-        .catch(() => this.app.vault.adapter.readBinary(this.getPluginAssetPath("fonts/NotoSansSC-Regular.otf")))
-        .catch(() => {
-          throw new Error(this.t("fontMissingError"));
-        });
+      this.fontBytesPromise = this.resolveFontBytes().catch((error) => {
+        this.fontBytesPromise = null;
+        throw error;
+      });
     }
     return this.fontBytesPromise;
+  }
+
+  private async resolveFontBytes(): Promise<ArrayBuffer> {
+    try {
+      return await this.loadLocalFontBytes();
+    } catch (localError) {
+      try {
+        const fontBytes = await this.downloadRemoteFontBytes();
+        void this.cacheRemoteFontBytes(fontBytes);
+        return fontBytes;
+      } catch (downloadError) {
+        console.warn("Mobile PDF Exporter CJK font unavailable.", { localError, downloadError });
+        throw new Error(this.t("fontMissingError"));
+      }
+    }
+  }
+
+  private async loadLocalFontBytes(): Promise<ArrayBuffer> {
+    let lastError: unknown = null;
+    for (const relativePath of LOCAL_CJK_FONT_CANDIDATES) {
+      try {
+        return await this.app.vault.adapter.readBinary(this.getPluginAssetPath(relativePath));
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError ?? new Error("No local CJK font asset found.");
+  }
+
+  private async downloadRemoteFontBytes(): Promise<ArrayBuffer> {
+    const url = `${CJK_FONT_RAW_ASSET_URL_BASE}/${encodeURIComponent(this.manifest.version)}/fonts/${encodeURIComponent(CJK_FONT_ASSET_FILE)}`;
+    const response = await requestUrl({ url, method: "GET" });
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(`Font download failed with HTTP ${response.status}.`);
+    }
+    return response.arrayBuffer;
+  }
+
+  private async cacheRemoteFontBytes(fontBytes: ArrayBuffer): Promise<void> {
+    const fontDir = this.getPluginAssetPath("fonts");
+    const fontPath = this.getPluginAssetPath(`fonts/${CJK_FONT_ASSET_FILE}`);
+    try {
+      if (!(await this.app.vault.adapter.exists(fontDir))) {
+        await this.app.vault.adapter.mkdir(fontDir);
+      }
+      await this.app.vault.adapter.writeBinary(fontPath, fontBytes.slice(0));
+    } catch (error) {
+      console.warn("Mobile PDF Exporter could not cache the downloaded CJK font.", error);
+    }
   }
 
   private async loadExportFont(

@@ -34,6 +34,12 @@ main.js
 styles.css
 ```
 
+For selectable Chinese PDF export, version 0.3.55 can download and cache the CJK subset font from the matching GitHub tag on first export. For offline manual installs, also place `NotoSansSC-Regular.gb2312-subset.ttf` at:
+
+```text
+<your-vault>/.obsidian/plugins/mobile-pdf-exporter/fonts/NotoSansSC-Regular.gb2312-subset.ttf
+```
+
 Restart Obsidian, or disable and re-enable the plugin from Obsidian settings.
 
 You can also install this repo through BRAT while it is waiting for inclusion in the official Obsidian community plugin browser.
@@ -42,7 +48,7 @@ You can also install this repo through BRAT while it is waiting for inclusion in
 
 To appear in Obsidian's built-in Community plugins browser, this plugin must be submitted to `obsidianmd/obsidian-releases` and pass review. The release used for review should attach the standard Obsidian plugin assets directly: `manifest.json`, `main.js`, and `styles.css`.
 
-The standard community-browser assets keep `main.js` small for mobile loading. A manually installed full font at `fonts/NotoSansSC-Regular.otf` or `fonts/SimHei.ttf` is used for broader selectable CJK export coverage when present.
+The standard community-browser assets keep `main.js` small for mobile loading. For CJK text export, the plugin first tries local font files and otherwise downloads the tagged CJK subset font on demand during export, then caches it under `fonts/`.
 
 ## Usage
 
@@ -54,9 +60,15 @@ The interface language can be set to Auto, Chinese, or English in the plugin set
 
 Markor creates PDF through Android WebView printing, so its preview PDF text is selectable. Obsidian plugins do not expose Android native printing, so this plugin uses the closest available browser-side approach: render the Obsidian preview layout, then write real PDF text and images at matching positions.
 
-The exporter uses the rendered preview DOM as the layout source, then writes a real PDF text layer. For CJK text, it tries local full font files first and otherwise falls back to a standard PDF font.
+The exporter uses the rendered preview DOM as the layout source, then writes a real PDF text layer. For CJK text, it tries local font files first, then downloads the tagged CJK subset font on demand, and otherwise falls back to a standard PDF font.
 
 ## Changelog
+
+### 0.3.55
+
+- Restores selectable/copyable common Chinese PDF export through an on-demand CJK subset font loaded from the matching GitHub tag.
+- Keeps `main.js` small for iPhone/iPad plugin startup; the CJK font is not read, decoded, or downloaded until export time.
+- Caches the downloaded CJK subset under the plugin `fonts/` folder so later exports can run without another download.
 
 ### 0.3.54
 
