@@ -30,6 +30,7 @@ const context = await esbuild.context({
   ],
   format: "cjs",
   loader: {
+    ".gz": "base64",
     ".jpg": "base64",
     ".png": "base64",
     ".otf": "base64"

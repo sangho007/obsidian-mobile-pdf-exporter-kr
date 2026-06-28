@@ -34,7 +34,7 @@ main.js
 styles.css
 ```
 
-For selectable Chinese PDF export, version 0.3.56 can download and cache the CJK subset font from GitHub/CDN on first export. For offline manual installs, also place `NotoSansSC-Regular.gb2312-subset.ttf` at:
+For selectable Chinese PDF export, version 0.3.57 includes a gzip-compressed CJK subset font and decompresses it only during export. If embedded decompression is unavailable, it can still download and cache the CJK subset font from GitHub/CDN. For offline manual installs, also place `NotoSansSC-Regular.gb2312-subset.ttf` at:
 
 ```text
 <your-vault>/.obsidian/plugins/mobile-pdf-exporter/fonts/NotoSansSC-Regular.gb2312-subset.ttf
@@ -48,7 +48,7 @@ You can also install this repo through BRAT while it is waiting for inclusion in
 
 To appear in Obsidian's built-in Community plugins browser, this plugin must be submitted to `obsidianmd/obsidian-releases` and pass review. The release used for review should attach the standard Obsidian plugin assets directly: `manifest.json`, `main.js`, and `styles.css`.
 
-The standard community-browser assets keep `main.js` small for mobile loading. For CJK text export, the plugin first tries local font files and otherwise downloads the tagged CJK subset font on demand during export, then caches it under `fonts/`.
+The standard community-browser assets keep `main.js` below the earlier 0.3.52 bundle size for mobile loading. For CJK text export, 0.3.57 tries the embedded compressed font during export, then falls back to local font files and tagged remote font downloads.
 
 ## Usage
 
@@ -60,9 +60,15 @@ The interface language can be set to Auto, Chinese, or English in the plugin set
 
 Markor creates PDF through Android WebView printing, so its preview PDF text is selectable. Obsidian plugins do not expose Android native printing, so this plugin uses the closest available browser-side approach: render the Obsidian preview layout, then write real PDF text and images at matching positions.
 
-The exporter uses the rendered preview DOM as the layout source, then writes a real PDF text layer. For CJK text, it tries local font files first, then downloads the tagged CJK subset font on demand, and otherwise falls back to a standard PDF font.
+The exporter uses the rendered preview DOM as the layout source, then writes a real PDF text layer. For CJK text, it tries the embedded compressed font first, then local font files, then tagged remote font downloads, and otherwise falls back to a standard PDF font.
 
 ## Changelog
+
+### 0.3.57
+
+- Adds a 0.3.52-style self-contained CJK experiment using an embedded gzip-compressed Unicode CJK subset font.
+- Decompresses the embedded font only during export, then falls back to local/remote font loading if the WebView does not support gzip decompression.
+- Keeps the two embedded support QR images from 0.3.54.
 
 ### 0.3.56
 

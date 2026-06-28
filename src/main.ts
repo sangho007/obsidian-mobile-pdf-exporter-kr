@@ -12,6 +12,7 @@ import {
   requestUrl
 } from "obsidian";
 import type { Color, PDFDocument, PDFFont, PDFPage } from "pdf-lib";
+import embeddedCjkFontGzipBase64 from "../fonts/NotoSansSC-Regular.gb2312-subset.ttf.gz";
 import supportCode1Base64 from "./generated/support-code-1.jpg";
 import supportCode2Base64 from "./generated/support-code-2.png";
 
@@ -1177,6 +1178,13 @@ export default class MobilePdfExporterPlugin extends Plugin {
   }
 
   private async resolveFontBytes(): Promise<ArrayBuffer> {
+    let embeddedError: unknown = null;
+    try {
+      return await this.loadEmbeddedCompressedFontBytes();
+    } catch (error) {
+      embeddedError = error;
+    }
+
     try {
       return await this.loadLocalFontBytes();
     } catch (localError) {
@@ -1185,10 +1193,24 @@ export default class MobilePdfExporterPlugin extends Plugin {
         void this.cacheRemoteFontBytes(fontBytes);
         return fontBytes;
       } catch (downloadError) {
-        console.warn("Mobile PDF Exporter CJK font unavailable.", { localError, downloadError });
+        console.warn("Mobile PDF Exporter CJK font unavailable.", { embeddedError, localError, downloadError });
         throw new Error(this.t("fontMissingError"));
       }
     }
+  }
+
+  private async loadEmbeddedCompressedFontBytes(): Promise<ArrayBuffer> {
+    const DecompressionStreamCtor = (
+      globalThis as typeof globalThis & {
+        DecompressionStream?: new (format: string) => TransformStream<Uint8Array, Uint8Array>;
+      }
+    ).DecompressionStream;
+    if (!DecompressionStreamCtor) {
+      throw new Error("This WebView does not support DecompressionStream.");
+    }
+    const compressedBytes = decodeBase64ToArrayBuffer(embeddedCjkFontGzipBase64);
+    const stream = new Blob([compressedBytes]).stream().pipeThrough(new DecompressionStreamCtor("gzip"));
+    return new Response(stream).arrayBuffer();
   }
 
   private async loadLocalFontBytes(): Promise<ArrayBuffer> {
@@ -1958,6 +1980,15 @@ function resolvePdfFontkit(moduleValue: unknown): RegisteredFontkit {
     throw new Error("PDF 字体组件初始化失败：fontkit.create 不存在。");
   }
   return candidate as RegisteredFontkit;
+}
+
+function decodeBase64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
 }
 
 function appendElement<K extends keyof HTMLElementTagNameMap>(
