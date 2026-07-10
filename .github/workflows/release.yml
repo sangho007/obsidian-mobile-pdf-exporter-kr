@@ -28,29 +28,69 @@ jobs:
 
       - name: Verify version
         run: |
-          node -e "const fs=require('fs'); const tag=process.env.GITHUB_REF_NAME; for (const file of ['manifest.json','package.json']) { const version=JSON.parse(fs.readFileSync(file,'utf8')).version; if (version !== tag) { throw new Error(`${file} version ${version} does not match tag ${tag}`); } }"
+          node -e 'const fs=require("fs"); const tag=process.env.GITHUB_REF_NAME; for (const file of ["manifest.json","package.json"]) { const version=JSON.parse(fs.readFileSync(file,"utf8")).version; if (version !== tag) throw new Error(file + " version " + version + " does not match tag " + tag); }'
 
-      - name: Build
-        run: npm run build
+      - name: Install PDF verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes poppler-utils
 
-      - name: Type check
-        run: npx tsc --noEmit
+      - name: Test selectable Korean PDF
+        run: npm test
+
+      - name: Build release ZIP
+        run: npm run release
 
       - name: Validate assets
         run: |
           node --check main.js
           node -e "for (const f of ['manifest.json','package.json','package-lock.json','versions.json']) JSON.parse(require('fs').readFileSync(f,'utf8'));"
+          for marker in \
+            "Copyright (c) 2019 Andrew Dillon" \
+            "Copyright (c) Microsoft Corporation" \
+            "Copyright 2013 Google Inc. All Rights Reserved." \
+            "Apache License" \
+            "Copyright 2008 Fair Oaks Labs, Inc." \
+            "Jean-loup Gailly and Mark Adler" \
+            "HarfBuzz is licensed under the so-called" \
+            "Copyright © 1991-2016 Unicode, Inc." \
+            "deep-equal 1.1.1" \
+            "es-abstract 1.17.5" \
+            "Lodash 4.17.15" \
+            "Copyright (c) 2012, 2013, 2014 James Halliday" \
+            "Copyright (c) 2014 Jordan Harband" \
+            "Copyright OpenJS Foundation and other contributors" \
+            "Reserved Font Name" \
+            "SIL OPEN FONT LICENSE"; do
+            grep --fixed-strings --quiet "$marker" main.js
+          done
+          unzip -t "dist/mobile-pdf-exporter-kr-${GITHUB_REF_NAME}.zip"
+          unzip -l "dist/mobile-pdf-exporter-kr-${GITHUB_REF_NAME}.zip" | grep --fixed-strings --quiet "THIRD_PARTY_LICENSES.txt"
 
       - name: Attest release assets
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: |
+            dist/mobile-pdf-exporter-kr-${{ github.ref_name }}.zip
             manifest.json
             main.js
             styles.css
+            LICENSE
+            THIRD_PARTY_NOTICES.md
+            THIRD_PARTY_LICENSES.txt
+            fonts/LICENSE-OFL.txt
+            fonts/FONTLOG.txt
+            fonts/NotoSansCJKkr-Regular.ko-subset.ttf
 
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" manifest.json main.js styles.css --title "${GITHUB_REF_NAME}" --notes "Community review cleanup release. Standard release assets only."
+          gh release create "${GITHUB_REF_NAME}" \
+            "dist/mobile-pdf-exporter-kr-${GITHUB_REF_NAME}.zip" \
+            manifest.json main.js styles.css \
+            LICENSE THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.txt \
+            fonts/LICENSE-OFL.txt fonts/FONTLOG.txt \
+            fonts/NotoSansCJKkr-Regular.ko-subset.ttf \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "무료 한글 선택형 PDF 포크. main.js와 ZIP에 글꼴 및 모든 제3자 라이선스 고지가 포함되어 있습니다."

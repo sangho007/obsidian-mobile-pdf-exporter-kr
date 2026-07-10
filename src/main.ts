@@ -8,15 +8,16 @@ import {
   PluginSettingTab,
   Setting,
   TFile,
-  normalizePath,
-  requestUrl
+  normalizePath
 } from "obsidian";
 import type { Color, PDFDocument, PDFFont, PDFPage } from "pdf-lib";
-import embeddedCjkFontGzipBase64 from "../fonts/NotoSansSC-Regular.gb2312-subset.ttf.gz";
+import pako from "pako";
+import embeddedKoreanFontGzipBase64 from "../fonts/NotoSansCJKkr-Regular.ko-subset.ttf.gz";
 import supportCode1Base64 from "./generated/support-code-1.jpg";
 import supportCode2Base64 from "./generated/support-code-2.png";
+import { canEncodePdfText, getEncodablePdfText } from "./pdf-text";
 
-const UI_LANGUAGES = ["auto", "zh", "en"] as const;
+const UI_LANGUAGES = ["auto", "ko", "zh", "en"] as const;
 type UiLanguage = typeof UI_LANGUAGES[number];
 type ResolvedUiLanguage = Exclude<UiLanguage, "auto">;
 
@@ -249,6 +250,68 @@ interface LiveDrawingController {
 }
 
 const UI_TEXT = {
+  ko: {
+    ribbonTitle: "미리보기 PDF 내보내기",
+    commandName: "Mobile PDF Exporter KR: 현재 노트를 미리보기 PDF로 내보내기",
+    noMarkdownNotice: "먼저 Markdown 노트를 여세요.",
+    optionsTitle: "PDF 내보내기 옵션",
+    exportModeName: "내보내기 방식",
+    exportModeDesc: "선택 가능 텍스트는 검색과 복사에 적합하고, 이미지 PDF는 화면 모양을 고정해서 보존합니다.",
+    exportModeSelectable: "선택 가능 텍스트",
+    exportModeImage: "이미지 PDF",
+    pageSizeName: "페이지 크기",
+    orientationName: "방향",
+    orientationPortrait: "세로",
+    orientationLandscape: "가로",
+    colorName: "색상",
+    colorOption: "컬러",
+    grayscaleOption: "회색조",
+    marginName: "여백",
+    contentScaleName: "내용 배율",
+    imageQualityName: "이미지 PDF 품질",
+    imageQualityDesc: "일반 노트의 이미지 PDF에만 적용됩니다. 품질이 높을수록 파일이 커집니다.",
+    imageQualityStandard: "표준 / 작은 파일",
+    imageQualityClear: "선명 / 권장",
+    imageQualityHigh: "고화질",
+    imageQualityUltra: "최고화질 / 큰 파일",
+    includeTitleName: "노트 제목 포함",
+    openAfterExportName: "내보낸 뒤 PDF 열기",
+    shareAfterExportName: "모바일 공유 시트 표시",
+    saveAsDefaultName: "기본값으로 저장",
+    saveAsDefaultDesc: "이번 선택을 다음 내보내기의 기본 옵션으로 저장합니다.",
+    outputFolderName: "출력 폴더",
+    outputFolderDesc: "PDF를 볼트 안의 이 폴더에 저장합니다.",
+    pdfNameLabel: "PDF 이름",
+    exportPdfButton: "PDF 내보내기",
+    cancelButton: "취소",
+    busyExporting: "PDF 내보내는 중",
+    busyCompleteTitle: "내보내기 완료",
+    busyCompleteStatus: "완료",
+    busyFailedTitle: "PDF 내보내기 실패",
+    settingsIntro: "메뉴와 버튼을 누르면 PDF 내보내기 옵션이 먼저 열립니다. 일반 Markdown 노트는 선택 가능 텍스트 또는 이미지 PDF로 내보낼 수 있습니다.",
+    settingsGeneralHeading: "일반",
+    settingsNoteOptionsHeading: "일반 노트 PDF 옵션",
+    pageSizeDesc: "모바일 긴 페이지는 휴대폰 읽기에 적합하고, A4/A5/Letter는 인쇄와 보관에 적합합니다.",
+    orientationDesc: "가로 방향은 페이지 너비와 높이를 서로 바꿉니다.",
+    colorDesc: "회색조는 인쇄에 적합하고, 컬러는 테마·링크·이미지 색상을 유지합니다.",
+    settingsSaveAndShareHeading: "저장 및 공유",
+    languageName: "인터페이스 언어",
+    languageDesc: "자동은 Obsidian 언어를 따릅니다. 내보내기 버튼, 메뉴, 명령, 옵션과 안내에 선택한 언어를 사용합니다.",
+    languageAuto: "자동 / Obsidian 언어 따르기",
+    languageKorean: "한국어",
+    languageChinese: "중국어",
+    languageEnglish: "영어",
+    codesTitle: "커피 한 잔 후원",
+    codesSubtitle: "이 도구가 도움이 되었다면 원저자의 유지보수를 후원할 수 있습니다.",
+    shareFailedNotice: "PDF는 저장했지만 시스템 공유 시트를 열지 못했습니다.",
+    fontMissingError: "포함된 PDF용 한글 글꼴을 읽지 못했습니다. 전체 플러그인 ZIP을 다시 설치하거나 fonts/NotoSansCJKkr-Regular.ko-subset.ttf 파일을 확인하세요.",
+    uniqueFileNameError: "고유한 PDF 파일 이름을 만들지 못했습니다.",
+    excalidrawApiMissingError: "Excalidraw 내보내기 API를 찾지 못했습니다. Excalidraw 플러그인이 켜져 있는지 확인하세요.",
+    excalidrawExportFailedError: "Excalidraw 이미지가 너무 크거나 내보내기에 실패했습니다. 낮은 해상도와 페이지 분할도 이미 시도했습니다.",
+    excalidrawPreviewUnavailable: "Excalidraw 미리보기를 사용할 수 없어 원본 데이터를 건너뛰었습니다.",
+    previewNoExportSizeError: "미리보기 영역에 내보낼 수 있는 크기가 없습니다.",
+    previewNoContentError: "미리보기에 내보낼 수 있는 내용이 없습니다."
+  },
   zh: {
     ribbonTitle: "导出预览版 PDF",
     commandName: "Mobile PDF Exporter: 导出当前笔记为预览版 PDF",
@@ -297,12 +360,13 @@ const UI_TEXT = {
     languageName: "界面语言",
     languageDesc: "Auto 会跟随 Obsidian 语言；导出按钮、菜单、命令、选项面板和提示会使用所选语言。",
     languageAuto: "Auto / 跟随 Obsidian",
+    languageKorean: "한국어",
     languageChinese: "中文",
     languageEnglish: "English",
     codesTitle: "给我买咖啡",
     codesSubtitle: "如果这个插件帮到你，可以扫码打赏支持继续维护。",
     shareFailedNotice: "PDF 已保存，但系统分享面板没有打开。",
-    fontMissingError: "缺少 PDF 中文字体，且无法从 GitHub 下载字体。请联网后重试，或把 NotoSansSC-Regular.gb2312-subset.ttf 放入插件目录的 fonts 文件夹。",
+    fontMissingError: "缺少 PDF 韩文字体。请重新安装完整插件包，或把 NotoSansCJKkr-Regular.ko-subset.ttf 放入插件目录的 fonts 文件夹。",
     uniqueFileNameError: "无法生成唯一 PDF 文件名。",
     excalidrawApiMissingError: "没有找到 Excalidraw 导出接口，请确认 Excalidraw 插件已启用。",
     excalidrawExportFailedError: "Excalidraw 图片过大或导出失败，已尝试降低分辨率和分页切片。",
@@ -358,12 +422,13 @@ const UI_TEXT = {
     languageName: "Interface language",
     languageDesc: "Auto follows Obsidian's language. Export buttons, menus, commands, options, and prompts use the selected language.",
     languageAuto: "Auto / follow Obsidian",
+    languageKorean: "Korean",
     languageChinese: "Chinese",
     languageEnglish: "English",
     codesTitle: "Buy me a coffee",
     codesSubtitle: "If this tool helps, tips are appreciated and support ongoing maintenance.",
     shareFailedNotice: "The PDF was saved, but the system share sheet did not open.",
-    fontMissingError: "Missing PDF font, and the plugin could not download it from GitHub. Try again online, or place NotoSansSC-Regular.gb2312-subset.ttf in the plugin fonts folder.",
+    fontMissingError: "Missing Korean PDF font. Reinstall the complete plugin package, or place NotoSansCJKkr-Regular.ko-subset.ttf in the plugin fonts folder.",
     uniqueFileNameError: "Could not generate a unique PDF filename.",
     excalidrawApiMissingError: "Excalidraw export API was not found. Make sure the Excalidraw plugin is enabled.",
     excalidrawExportFailedError: "The Excalidraw image was too large or export failed. Lower resolutions and page slicing were already tried.",
@@ -429,14 +494,12 @@ const TASK_CHECKBOX_VERTICAL_SHIFT_EM = 0.22;
 const NOTE_DOODLE_MAX_PEN_COUNT = 5;
 const NOTE_DOODLE_DEFAULT_OPACITY = 1;
 const NOTE_DOODLE_WATERCOLOR = "watercolor";
-const CJK_FONT_ASSET_FILE = "NotoSansSC-Regular.gb2312-subset.ttf";
-const CJK_FONT_RAW_ASSET_URL_BASE = "https://raw.githubusercontent.com/arias007/obsidian-mobile-pdf-exporter";
-const CJK_FONT_JSDELIVR_URL_BASE = "https://cdn.jsdelivr.net/gh/arias007/obsidian-mobile-pdf-exporter";
-const LOCAL_CJK_FONT_CANDIDATES = [
-  `fonts/${CJK_FONT_ASSET_FILE}`,
-  CJK_FONT_ASSET_FILE,
-  "fonts/SimHei.ttf",
-  "fonts/NotoSansSC-Regular.otf"
+const KOREAN_FONT_ASSET_FILE = "NotoSansCJKkr-Regular.ko-subset.ttf";
+const LOCAL_KOREAN_FONT_CANDIDATES = [
+  `fonts/${KOREAN_FONT_ASSET_FILE}`,
+  KOREAN_FONT_ASSET_FILE,
+  "fonts/NotoSansKR-Regular.ttf",
+  "fonts/NotoSansCJKkr-Regular.otf"
 ] as const;
 const SETTINGS_EXTRA_CODE_ASSETS = [
   { src: `data:image/jpeg;base64,${supportCode1Base64}`, label: "给我买咖啡 / Buy me a coffee", fileName: "buy-me-a-coffee.jpg" },
@@ -444,10 +507,12 @@ const SETTINGS_EXTRA_CODE_ASSETS = [
 ] as const;
 
 function resolveUiLanguage(language: UiLanguage): ResolvedUiLanguage {
-  if (language === "zh" || language === "en") return language;
+  if (language === "ko" || language === "zh" || language === "en") return language;
   const browserLanguage = (window.navigator.language || "").toLowerCase();
   const browserLanguages = (window.navigator.languages || []).map((item) => item.toLowerCase());
-  return [browserLanguage, ...browserLanguages].some((item) => item.startsWith("zh")) ? "zh" : "en";
+  const languages = [browserLanguage, ...browserLanguages];
+  if (languages.some((item) => item.startsWith("ko"))) return "ko";
+  return languages.some((item) => item.startsWith("zh")) ? "zh" : "en";
 }
 
 function translate(language: ResolvedUiLanguage, key: TranslationKey): string {
@@ -456,6 +521,18 @@ function translate(language: ResolvedUiLanguage, key: TranslationKey): string {
 
 function getPageLabel(preset: PdfPagePreset, language: ResolvedUiLanguage): string {
   if (language === "zh") return PDF_PAGE_LABELS[preset];
+  if (language === "ko") {
+    switch (preset) {
+      case "mobile":
+        return "모바일 긴 페이지 104 x 225 mm";
+      case "a4":
+        return "A4 210 x 297 mm";
+      case "a5":
+        return "A5 148 x 210 mm";
+      case "letter":
+        return "Letter 8.5 x 11 in";
+    }
+  }
   switch (preset) {
     case "mobile":
       return "Mobile long page 104 x 225 mm";
@@ -474,6 +551,11 @@ function formatBusyElapsed(language: ResolvedUiLanguage, seconds: number): strin
       ? `已用 ${seconds} 秒，仍在处理，请不要关闭 Obsidian。`
       : `已用 ${seconds} 秒`;
   }
+  if (language === "ko") {
+    return seconds >= 8
+      ? `${seconds}초 경과. 아직 처리 중이니 Obsidian을 닫지 마세요.`
+      : `${seconds}초 경과`;
+  }
   return seconds >= 8
     ? `${seconds}s elapsed. Still working; do not close Obsidian.`
     : `${seconds}s elapsed`;
@@ -482,7 +564,7 @@ function formatBusyElapsed(language: ResolvedUiLanguage, seconds: number): strin
 type RegisteredFontkit = Parameters<PDFDocument["registerFontkit"]>[0];
 type FontkitModuleShape = Partial<RegisteredFontkit> & { default?: Partial<RegisteredFontkit> };
 type PdfLibRuntime = typeof import("pdf-lib");
-type PdfFontkitRuntime = typeof import("@pdf-lib/fontkit");
+type PdfFontkitRuntime = typeof import("pdflib-fontkit");
 interface PdfRuntime {
   PDFDocument: PdfLibRuntime["PDFDocument"];
   PDFString: PdfLibRuntime["PDFString"];
@@ -499,7 +581,6 @@ interface ExportFont {
 let pdfRuntimePromise: Promise<PdfRuntime> | null = null;
 let pdfStringRuntime: PdfLibRuntime["PDFString"] | null = null;
 let exportableElementCache: WeakMap<Element, boolean> | null = null;
-const pdfCharEncodingCache = new WeakMap<PDFFont, Map<string, boolean>>();
 let rgb: PdfLibRuntime["rgb"] = ((red: number, green: number, blue: number) => ({
   type: "RGB",
   red,
@@ -509,7 +590,7 @@ let rgb: PdfLibRuntime["rgb"] = ((red: number, green: number, blue: number) => (
 
 async function loadPdfRuntime(): Promise<PdfRuntime> {
   if (!pdfRuntimePromise) {
-    pdfRuntimePromise = Promise.all([import("pdf-lib"), import("@pdf-lib/fontkit")]).then(([pdfLib, fontkit]) => {
+    pdfRuntimePromise = Promise.all([import("pdf-lib"), import("pdflib-fontkit")]).then(([pdfLib, fontkit]) => {
       const runtime: PdfRuntime = {
         PDFDocument: pdfLib.PDFDocument,
         PDFString: pdfLib.PDFString,
@@ -736,9 +817,12 @@ export default class MobilePdfExporterPlugin extends Plugin {
         }
       }
 
-      const suffix = this.getResolvedLanguage() === "zh"
+      const resolvedLanguage = this.getResolvedLanguage();
+      const suffix = resolvedLanguage === "zh"
         ? (errors.length > 0 ? `最后错误：${errors[errors.length - 1]}` : "未能取得可用图片。")
-        : (errors.length > 0 ? ` Last error: ${errors[errors.length - 1]}` : " No usable image was produced.");
+        : resolvedLanguage === "ko"
+          ? (errors.length > 0 ? ` 마지막 오류: ${errors[errors.length - 1]}` : " 사용할 수 있는 이미지를 만들지 못했습니다.")
+          : (errors.length > 0 ? ` Last error: ${errors[errors.length - 1]}` : " No usable image was produced.");
       throw new Error(`${this.t("excalidrawExportFailedError")}${suffix}`);
     } finally {
       if (lease.destroyAfterUse) lease.api.destroy?.();
@@ -1017,8 +1101,15 @@ export default class MobilePdfExporterPlugin extends Plugin {
     const pdfDoc = await PDFDocumentRuntime.create();
     pdfDoc.setTitle(file.basename);
     pdfDoc.setSubject(PDF_SUBJECT);
-    const exportFont = await this.loadExportFont(pdfDoc, fontkitModule, StandardFonts.Helvetica);
+    const requiresUnicodeFont = model.textFragments.some((fragment) => containsNonAsciiText(fragment.text));
+    const exportFont = await this.loadExportFont(
+      pdfDoc,
+      fontkitModule,
+      StandardFonts.Helvetica,
+      requiresUnicodeFont
+    );
     const { font } = exportFont;
+    this.assertKoreanTextEncodable(font, model.textFragments);
 
     for (let index = 0; index < model.pageBreaks.length - 1; index += 1) {
       const pageTopPx = model.pageBreaks[index];
@@ -1188,100 +1279,82 @@ export default class MobilePdfExporterPlugin extends Plugin {
     try {
       return await this.loadLocalFontBytes();
     } catch (localError) {
-      try {
-        const fontBytes = await this.downloadRemoteFontBytes();
-        void this.cacheRemoteFontBytes(fontBytes);
-        return fontBytes;
-      } catch (downloadError) {
-        console.warn("Mobile PDF Exporter CJK font unavailable.", { embeddedError, localError, downloadError });
-        throw new Error(this.t("fontMissingError"));
-      }
+      console.warn("Mobile PDF Exporter Korean/CJK font unavailable.", { embeddedError, localError });
+      throw new Error(this.t("fontMissingError"));
     }
   }
 
   private async loadEmbeddedCompressedFontBytes(): Promise<ArrayBuffer> {
+    const compressedBytes = decodeBase64ToArrayBuffer(embeddedKoreanFontGzipBase64);
     const DecompressionStreamCtor = (
       globalThis as typeof globalThis & {
         DecompressionStream?: new (format: string) => TransformStream<Uint8Array, Uint8Array>;
       }
     ).DecompressionStream;
-    if (!DecompressionStreamCtor) {
-      throw new Error("This WebView does not support DecompressionStream.");
+    if (DecompressionStreamCtor) {
+      try {
+        const stream = new Blob([compressedBytes]).stream().pipeThrough(new DecompressionStreamCtor("gzip"));
+        return await new Response(stream).arrayBuffer();
+      } catch (error) {
+        console.warn("Native gzip decompression failed; using the JavaScript fallback.", error);
+      }
     }
-    const compressedBytes = decodeBase64ToArrayBuffer(embeddedCjkFontGzipBase64);
-    const stream = new Blob([compressedBytes]).stream().pipeThrough(new DecompressionStreamCtor("gzip"));
-    return new Response(stream).arrayBuffer();
+    return pako.ungzip(new Uint8Array(compressedBytes)).slice().buffer;
   }
 
   private async loadLocalFontBytes(): Promise<ArrayBuffer> {
     let lastError: unknown = null;
-    for (const relativePath of LOCAL_CJK_FONT_CANDIDATES) {
+    for (const relativePath of LOCAL_KOREAN_FONT_CANDIDATES) {
       try {
         return await this.app.vault.adapter.readBinary(this.getPluginAssetPath(relativePath));
       } catch (error) {
         lastError = error;
       }
     }
-    throw lastError ?? new Error("No local CJK font asset found.");
-  }
-
-  private async downloadRemoteFontBytes(): Promise<ArrayBuffer> {
-    let lastError: unknown = null;
-    for (const url of this.getRemoteFontUrls()) {
-      try {
-        const response = await requestUrl({ url, method: "GET" });
-        if (response.status < 200 || response.status >= 300) {
-          throw new Error(`Font download failed with HTTP ${response.status}.`);
-        }
-        return response.arrayBuffer;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    throw lastError ?? new Error("Font download failed.");
-  }
-
-  private getRemoteFontUrls(): string[] {
-    const fontPath = `fonts/${encodeURIComponent(CJK_FONT_ASSET_FILE)}`;
-    const version = encodeURIComponent(this.manifest.version);
-    return [
-      `${CJK_FONT_RAW_ASSET_URL_BASE}/${version}/${fontPath}`,
-      `${CJK_FONT_JSDELIVR_URL_BASE}@${version}/${fontPath}`,
-      `${CJK_FONT_RAW_ASSET_URL_BASE}/main/${fontPath}`,
-      `${CJK_FONT_JSDELIVR_URL_BASE}@main/${fontPath}`
-    ];
-  }
-
-  private async cacheRemoteFontBytes(fontBytes: ArrayBuffer): Promise<void> {
-    const fontDir = this.getPluginAssetPath("fonts");
-    const fontPath = this.getPluginAssetPath(`fonts/${CJK_FONT_ASSET_FILE}`);
-    try {
-      if (!(await this.app.vault.adapter.exists(fontDir))) {
-        await this.app.vault.adapter.mkdir(fontDir);
-      }
-      await this.app.vault.adapter.writeBinary(fontPath, fontBytes.slice(0));
-    } catch (error) {
-      console.warn("Mobile PDF Exporter could not cache the downloaded CJK font.", error);
-    }
+    throw lastError ?? new Error("No local Korean font asset found.");
   }
 
   private async loadExportFont(
     pdfDoc: PDFDocument,
     fontkitModule: PdfFontkitRuntime,
-    standardFont: string
+    standardFont: string,
+    requireUnicodeFont: boolean
   ): Promise<ExportFont> {
     try {
       pdfDoc.registerFontkit(resolvePdfFontkit(fontkitModule));
       return {
-        font: await pdfDoc.embedFont(await this.loadFontBytes(), { subset: true }),
+        font: await pdfDoc.embedFont(await this.loadFontBytes(), {
+          subset: true,
+          customName: createPdfSubsetFontName()
+        }),
         supportsUnicode: true
       };
     } catch (error) {
       console.warn("Mobile PDF Exporter custom PDF font unavailable; falling back to a standard PDF font.", error);
+      if (requireUnicodeFont) throw new Error(this.t("fontMissingError"));
       return {
         font: await pdfDoc.embedFont(standardFont),
         supportsUnicode: false
       };
+    }
+  }
+
+  private assertKoreanTextEncodable(font: PDFFont, fragments: TextFragment[]): void {
+    const checkedCodePoints = new Set<number>();
+    for (const fragment of fragments) {
+      for (const character of fragment.text) {
+        if (!isKoreanCharacter(character)) continue;
+        const codePoint = character.codePointAt(0);
+        if (codePoint === undefined || checkedCodePoints.has(codePoint)) continue;
+        checkedCodePoints.add(codePoint);
+        if (!canEncodePdfText(font, character)) {
+          console.error("Mobile PDF Exporter Korean glyph is missing from the embedded PDF font.", {
+            character,
+            codePoint: codePoint.toString(16)
+          });
+          throw new Error(this.t("fontMissingError"));
+        }
+      }
     }
   }
 
@@ -1704,7 +1777,7 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.replaceChildren();
-    appendElement(containerEl, "h2", { text: "Mobile PDF Exporter" });
+    appendElement(containerEl, "h2", { text: "Mobile PDF Exporter KR" });
     appendElement(containerEl, "p", { text: this.plugin.t("settingsIntro") });
 
     appendElement(containerEl, "h3", { text: this.plugin.t("settingsGeneralHeading") });
@@ -1715,6 +1788,7 @@ class MobilePdfExporterSettingTab extends PluginSettingTab {
       .addDropdown((dropdown) => {
         dropdown
           .addOption("auto", this.plugin.t("languageAuto"))
+          .addOption("ko", this.plugin.t("languageKorean"))
           .addOption("zh", this.plugin.t("languageChinese"))
           .addOption("en", this.plugin.t("languageEnglish"))
           .setValue(this.plugin.settings.language)
@@ -1971,6 +2045,31 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
 
 function normalizeChoice<T extends string>(value: unknown, choices: readonly T[], fallback: T): T {
   return typeof value === "string" && choices.includes(value as T) ? value as T : fallback;
+}
+
+function containsNonAsciiText(text: string): boolean {
+  return /[^\u0009\u000A\u000D\u0020-\u007E]/u.test(text);
+}
+
+function isKoreanCharacter(character: string): boolean {
+  const codePoint = character.codePointAt(0);
+  if (codePoint === undefined) return false;
+  return (
+    (codePoint >= 0x1100 && codePoint <= 0x11ff) ||
+    (codePoint >= 0x3130 && codePoint <= 0x318f) ||
+    (codePoint >= 0xa960 && codePoint <= 0xa97f) ||
+    (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+    (codePoint >= 0xd7b0 && codePoint <= 0xd7ff) ||
+    (codePoint >= 0xffa0 && codePoint <= 0xffdc)
+  );
+}
+
+function createPdfSubsetFontName(): string {
+  let prefix = "";
+  for (let index = 0; index < 6; index += 1) {
+    prefix += String.fromCharCode(65 + Math.floor(Math.random() * 26));
+  }
+  return `${prefix}+NotoSansCJKkr-Regular`;
 }
 
 function resolvePdfFontkit(moduleValue: unknown): RegisteredFontkit {
@@ -3314,10 +3413,7 @@ function drawSafeText(
     page.drawText(clean, drawOptions);
     return { text: clean, size: fitSize, width: fitWidth };
   } catch {
-    const fallback = getEncodablePdfText(
-      options.font,
-      clean.replace(/[^\u0020-\u007E\u3400-\u9FFF\uF900-\uFAFF，。！？、；：“”‘’（）《》【】￥…—]/gu, "")
-    );
+    const fallback = getEncodablePdfText(options.font, clean);
     if (!fallback) return { text: "", size: fitSize, width: 0 };
     try {
       const fallbackWidth = options.font.widthOfTextAtSize(fallback, options.size);
@@ -3335,50 +3431,6 @@ function drawSafeText(
       return { text: "", size: fitSize, width: 0 };
     }
   }
-}
-
-function getEncodablePdfText(font: PDFFont, text: string): string {
-  if (!text) return "";
-  if (canEncodePdfText(font, text)) return text;
-
-  const cjkFallback = text.replace(/[^\u0020-\u007E\u3400-\u9FFF\uF900-\uFAFF，。！？、；：“”‘’（）《》【】￥…—]/gu, "");
-  if (cjkFallback && canEncodePdfText(font, cjkFallback)) return cjkFallback;
-
-  const asciiFallback = text.replace(/[^\u0020-\u007E]/gu, "");
-  if (asciiFallback && canEncodePdfText(font, asciiFallback)) return asciiFallback;
-
-  return filterEncodablePdfChars(font, text);
-}
-
-function canEncodePdfText(font: PDFFont, text: string): boolean {
-  try {
-    font.encodeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function filterEncodablePdfChars(font: PDFFont, text: string): string {
-  let filtered = "";
-  for (const char of text) {
-    if (canEncodePdfChar(font, char)) filtered += char;
-  }
-  return filtered.trim();
-}
-
-function canEncodePdfChar(font: PDFFont, char: string): boolean {
-  let cache = pdfCharEncodingCache.get(font);
-  if (!cache) {
-    cache = new Map<string, boolean>();
-    pdfCharEncodingCache.set(font, cache);
-  }
-
-  const cached = cache.get(char);
-  if (cached !== undefined) return cached;
-  const encodable = canEncodePdfText(font, char);
-  cache.set(char, encodable);
-  return encodable;
 }
 
 function drawLinkAnnotationLayer(
@@ -3951,7 +4003,7 @@ function getCanvasTextFont(
 }
 
 function getCanvasFontFamily(fontFamily?: string): string {
-  const fallback = `"Noto Sans SC", "Microsoft YaHei", "PingFang SC", sans-serif`;
+  const fallback = `"Noto Sans CJK KR", "Noto Sans KR", "Apple SD Gothic Neo", "Noto Sans SC", sans-serif`;
   const clean = (fontFamily ?? "").trim();
   if (!clean) return fallback;
   return `${clean}, ${fallback}`;

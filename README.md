@@ -1,344 +1,129 @@
-# Obsidian Mobile PDF Exporter
+# Mobile PDF Exporter KR
 
-One-click preview-style PDF export for Obsidian mobile and desktop.
+아이패드·아이폰·데스크톱 Obsidian에서 현재 노트를 **한글 검색·선택·복사가 가능한 PDF**로 내보내는 무료 플러그인입니다.
 
-## What it does
+별도 iOS 앱, 서버, 계정, 유료 API 없이 기기 안에서 동작합니다.
 
-- Adds one ribbon button, one command, and one note menu item. The title follows the configured interface language.
-- Shows a PDF export options panel before exporting, so each export can choose common PDF settings.
-- Supports Auto / Chinese / English UI text for export buttons, menus, commands, options, settings, and export prompts.
-- Exports the current Markdown preview to a phone-width PDF.
-- Keeps text selectable/copyable by writing a real PDF text layer.
-- Adds ordinary-note PDF options for page size, orientation, color/grayscale, margin, content scale, selectable-text PDF, and image PDF.
-- Uses the rendered Obsidian preview DOM as the layout source.
-- Draws real vector PDF text as the visible body, so exported text stays sharp and selectable.
-- Embeds images separately and draws lightweight block backgrounds for code, tables, quotes, and callouts.
-- Draws link color/underlines, task checkboxes, list bullets, ordered-list markers, and small SVG icons from the rendered preview.
-- Avoids page breaks inside images, list items, paragraphs, code blocks, tables, quotes, embeds, and callouts when they can fit on one page.
-- Exports direct `.excalidraw.md` files as pure image PDFs through the Excalidraw runtime, with automatic lower-resolution retries and page slicing for large drawings.
-- Keeps the startup bundle small for Obsidian mobile. Full CJK text export is available when a local font file is installed.
+이 프로젝트는 [arias007/obsidian-mobile-pdf-exporter](https://github.com/arias007/obsidian-mobile-pdf-exporter)의 한국어 글꼴 포크입니다. 원본의 미리보기 렌더링, 페이지 분할, 이미지·링크·콜아웃 처리와 Excalidraw 지원을 유지합니다.
 
-## Install
+## 한국어 포크에서 달라진 점
 
-Download the latest release assets from GitHub, then extract them into:
+- `Noto Sans CJK KR` TrueType 글꼴을 정적 Regular 두께로 변환·서브셋해 gzip으로 번들에 포함합니다.
+- 현대 한글 11,172자 전체, 한글 자모·호환 자모·확장 자모를 포함합니다.
+- 영문, 일반 문장부호, 통화·수학·화살표 기호를 함께 포함합니다.
+- iPad의 언어가 한국어이면 플러그인 UI도 자동으로 한국어를 사용합니다.
+- 플러그인 ID를 `mobile-pdf-exporter-kr`로 분리해 원본 업데이트가 이 포크를 덮어쓰지 않습니다.
 
-```text
-<your-vault>/.obsidian/plugins/mobile-pdf-exporter/
-```
+선택형 PDF는 Obsidian 미리보기를 페이지 이미지로 보존하고, 그 위에 거의 투명한 실제 PDF 텍스트 레이어를 배치합니다. 따라서 테마와 복잡한 렌더링을 유지하면서 한글 검색·선택·복사가 가능합니다.
 
-The plugin folder should contain:
+## 설치
 
-```text
-manifest.json
-main.js
-styles.css
-```
+### iPad에서 권장: BRAT
 
-For selectable Chinese PDF export, version 0.3.57 includes a gzip-compressed CJK subset font and decompresses it only during the first export that needs Chinese text. The first export can take about half a minute while the font is decompressed and cached; later exports should be faster because the cached font is reused. If embedded decompression is unavailable, it can still download and cache the CJK subset font from GitHub/CDN. For offline manual installs, also place `NotoSansSC-Regular.gb2312-subset.ttf` at:
+iPad의 기본 파일 앱은 숨김 폴더인 `.obsidian`을 표시하지 않으므로 BRAT으로
+설치하는 방식이 가장 간단합니다.
+
+1. Obsidian에서 무료 커뮤니티 플러그인 `BRAT`을 설치하고 켭니다.
+2. BRAT 설정에서 `Add Beta plugin`을 누릅니다.
+3. 다음 저장소 주소를 입력합니다.
 
 ```text
-<your-vault>/.obsidian/plugins/mobile-pdf-exporter/fonts/NotoSansSC-Regular.gb2312-subset.ttf
+https://github.com/sangho007/obsidian-mobile-pdf-exporter-kr
 ```
 
-Restart Obsidian, or disable and re-enable the plugin from Obsidian settings.
+4. 설치가 끝나면 `설정 → 커뮤니티 플러그인 → Mobile PDF Exporter KR`을
+   켭니다.
 
-You can also install this repo through BRAT while it is waiting for inclusion in the official Obsidian community plugin browser.
+BRAT은 `manifest.json`, `main.js`, `styles.css`를 직접 설치합니다. 글꼴과
+모든 필수 라이선스 고지는 `main.js` 안에 포함되어 있어 추가 파일이나
+네트워크 글꼴 다운로드가 필요 없습니다.
 
-## Obsidian community plugin browser
+### ZIP 수동 설치
 
-To appear in Obsidian's built-in Community plugins browser, this plugin must be submitted to `obsidianmd/obsidian-releases` and pass review. The release used for review should attach the standard Obsidian plugin assets directly: `manifest.json`, `main.js`, and `styles.css`.
+릴리스 압축 파일을 풀어 다음 폴더에 넣습니다.
 
-The standard community-browser assets keep `main.js` below the earlier 0.3.52 bundle size for mobile loading. For CJK text export, 0.3.57 tries the embedded compressed font during export, then falls back to local font files and tagged remote font downloads.
+```text
+<볼트>/.obsidian/plugins/mobile-pdf-exporter-kr/
+```
 
-## Usage
+최소 구성은 다음과 같습니다.
 
-Open a Markdown note, then click the `Export preview PDF` ribbon or menu command. Choose the page size, orientation, color mode, export mode, and other common PDF options in the panel, then click `Export PDF`. The exported PDF is saved to `PDF Exports` in the current vault by default.
+```text
+mobile-pdf-exporter-kr/
+├── manifest.json
+├── main.js
+└── styles.css
+```
 
-The interface language can be set to Auto, Chinese, or English in the plugin settings. Auto follows the browser/system locale and uses English outside Chinese locales.
+글꼴은 `main.js`에 압축 상태로 포함되어 있어 별도 다운로드가 필요 없습니다. 기본 파일 앱만으로는 `.obsidian` 폴더에 접근할 수 없으므로 수동 설치에는 숨김 폴더를 다룰 수 있는 파일 관리 도구가 필요합니다. 릴리스 ZIP에는 복구와 검증을 위한 로컬 글꼴 `fonts/NotoSansCJKkr-Regular.ko-subset.ttf`도 함께 들어 있습니다.
 
-## Notes
+Obsidian을 다시 시작한 뒤 `설정 → 커뮤니티 플러그인 → Mobile PDF Exporter KR`을 켭니다. 원본 `Mobile PDF Exporter`가 이미 설치되어 있다면 메뉴 중복을 피하도록 원본은 끄는 것을 권장합니다.
 
-Markor creates PDF through Android WebView printing, so its preview PDF text is selectable. Obsidian plugins do not expose Android native printing, so this plugin uses the closest available browser-side approach: render the Obsidian preview layout, then write real PDF text and images at matching positions.
+## 사용법
 
-The exporter uses the rendered preview DOM as the layout source, then writes a real PDF text layer. For CJK text, it tries the embedded compressed font first, then local font files, then tagged remote font downloads, and otherwise falls back to a standard PDF font.
+1. Markdown 노트를 엽니다.
+2. 리본 버튼, 노트 메뉴 또는 명령 팔레트에서 `미리보기 PDF 내보내기`를 실행합니다.
+3. `내보내기 방식 → 선택 가능 텍스트`를 선택합니다.
+4. A4/A5/Letter/모바일 페이지, 방향, 여백과 배율을 정합니다.
+5. `PDF 내보내기`를 누릅니다.
 
-## Changelog
+기본 출력 위치는 볼트의 `PDF Exports` 폴더입니다. 첫 사용 후 PDF에서 `가나다라마바사`를 검색하고 복사해 한글 텍스트 레이어가 정상인지 확인하세요.
 
-### 0.3.57
+## 글꼴 범위와 재현 빌드
 
-- Adds a 0.3.52-style self-contained CJK experiment using an embedded gzip-compressed Unicode CJK subset font.
-- Decompresses the embedded font only during the first export that needs Chinese text, then caches it for later exports.
-- Keeps the two embedded support QR images from 0.3.54.
+생성된 글꼴:
 
-### 0.3.56
+```text
+fonts/NotoSansCJKkr-Regular.ko-subset.ttf
+fonts/NotoSansCJKkr-Regular.ko-subset.ttf.gz
+```
 
-- Adds fallback CJK font download URLs, so export can retry jsDelivr and the `main` branch font if the version-tag raw URL is temporarily unavailable.
-- Keeps the startup bundle small and still loads the CJK font only during export.
+원본 글꼴은 공식 [notofonts/noto-cjk](https://github.com/notofonts/noto-cjk)의 고정 커밋 `523d033d6cb47f4a80c58a35753646f5c3608a78`에 있는 `Sans/Variable/TTF/NotoSansCJKkr-VF.ttf`입니다. 이 포크를 만들 때 사용한 원본 파일의 SHA-256은 다음과 같습니다.
 
-### 0.3.55
+```text
+7715af52f5fe77153ce5678546258993982d2da61abea8d25fb89eb5aaec5ca6
+```
 
-- Restores selectable/copyable common Chinese PDF export through an on-demand CJK subset font loaded from the matching GitHub tag.
-- Keeps `main.js` small for iPhone/iPad plugin startup; the CJK font is not read, decoded, or downloaded until export time.
-- Caches the downloaded CJK subset under the plugin `fonts/` folder so later exports can run without another download.
+HarfBuzz의 `hb-subset`이 설치된 환경에서 다시 만들 수 있습니다.
 
-### 0.3.54
+```bash
+npm run build:font -- /path/to/NotoSansCJKkr-VF.ttf
+```
 
-- Restores the two embedded support QR images in the settings page while keeping the embedded CJK font subset out of the startup bundle.
-- Keeps the release layout to the standard Obsidian assets: `manifest.json`, `main.js`, and `styles.css`.
+생성 스크립트는 가변 글꼴을 `wght=400`의 정적 TrueType으로 고정한 뒤 현대·옛한글과 일반 문서 기호만 남깁니다. iPad 메모리 사용량을 줄이기 위해 대규모 한자·중국어 범위는 넣지 않습니다. 출력 TTF의 SHA-256은 `086930ba7df8c78de017cf609e8e23dbf4374074656f559f0cd617c803153ad5`입니다.
 
-### 0.3.53
+## 개발과 검증
 
-- Reduces the startup `main.js` bundle by removing the embedded CJK font subset and embedded support QR images.
-- Restores optional settings QR images to lazy local asset loading, so standard community installs do not parse image data at plugin startup.
-- Keeps the release layout to the standard Obsidian assets: `manifest.json`, `main.js`, and `styles.css`.
+```bash
+npm ci
+npm run build
+npm test
+```
 
-### 0.3.52
+`test:korean-font`는 한글·영문·옛한글 자모와 미지원 한자·이모지가 섞인 PDF를 생성하고, Poppler의 `pdftotext`, `pdffonts`, `pdftoppm`으로 텍스트 추출·TrueType 임베딩·실제 한글 윤곽 렌더링을 모두 검사합니다. 미지원 문자가 같은 문장에 있어도 한글은 남아야 합니다. Poppler 실행 파일이 PATH에 없다면 다음처럼 위치를 지정합니다.
 
-- Embeds the two support QR codes directly into `main.js`, so the settings page can show them after standard community-browser installs.
-- Keeps the GitHub release layout to the standard Obsidian assets only: `manifest.json`, `main.js`, and `styles.css`.
+```bash
+PDFTOTEXT=/path/to/pdftotext npm run test:korean-font
+```
 
-### 0.3.51
+검증 PDF는 `dist/korean-selectable-smoke.pdf`에 생성됩니다.
 
-- Embeds a lightweight common-CJK font subset in `main.js`, so standard community-browser installs can copy common Chinese text without separate font files.
-- Keeps full local font files as the first choice when available for broader CJK coverage.
-- Stops warming up font bytes when opening the options panel; the embedded subset is decoded only during export.
-- Filters unsupported characters per character, so one rare unsupported glyph no longer drops the rest of the line from the PDF text layer.
+## 개인정보와 네트워크
 
-### 0.3.40
+노트 렌더링, PDF 생성, 글꼴 로딩은 모두 기기 안에서 이루어집니다. 글꼴을 포함한 이 기능은 네트워크 요청을 하지 않으며 노트 내용도 전송하지 않습니다. 최신 WebView에서는 기본 gzip 해제 기능을 쓰고, 이를 지원하지 않는 구형 WebView에서는 번들된 JavaScript 대체 구현을 사용합니다.
 
-- Migrates the settings page from deprecated imperative `display()` rendering to Obsidian's current `getSettingDefinitions()` API.
-- Raises `minAppVersion` to 1.13.0 because the current settings API is available from Obsidian 1.13.0.
+## 제한 사항
 
-### 0.3.39
+- 선택형 PDF의 화면 모양은 래스터 이미지이고, 검색·선택용 텍스트 레이어가 별도로 들어갑니다. 따라서 구조화 PDF/PDF-UA를 보장하지 않습니다.
+- 컬러 이모지는 글꼴 범위에 포함되지 않으며 화면 이미지로만 보일 수 있습니다.
+- 한자·중국어 본문은 iPad 메모리를 아끼기 위해 선택 텍스트 글꼴에서 제외했으며 화면 이미지에는 그대로 보입니다.
+- 매우 긴 노트는 iPad 메모리 한계 때문에 낮은 이미지 품질이나 작은 내용 배율이 필요할 수 있습니다.
+- Dataview나 다른 플러그인이 비동기로 렌더링하는 내용은 캡처 시점에 따라 달라질 수 있습니다.
 
-- Cleans up community review warnings for release dependencies, pop-out window document access, requestAnimationFrame usage, PDF text sanitizing, and CSS compatibility.
-- Adds a GitHub Actions release workflow that builds standard release assets and generates GitHub artifact attestations.
-- Keeps the PDF export behavior from 0.3.38 unchanged.
+## 라이선스
 
-### 0.3.38
+- 플러그인 코드: [MIT](LICENSE)
+- Noto Sans CJK KR 및 생성된 하위 글꼴: [SIL Open Font License 1.1](fonts/LICENSE-OFL.txt)
+- 번들 JavaScript의 제3자 코드·데이터: MIT, HarfBuzz Old MIT, Apache-2.0, BSD-3-Clause, ISC, Zlib, 0BSD, Unicode-DFS-2016. 구성 목록은 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), 전체 고지는 [THIRD_PARTY_LICENSES.txt](THIRD_PARTY_LICENSES.txt)를 참조하세요.
 
-- Publishes the next standard GitHub release for community plugin review refresh.
-- Keeps the 0.3.37 runtime behavior and direct release asset layout unchanged.
-
-### 0.3.37
-
-- Carries forward the 0.3.36 community-review-compatible release structure.
-- Keeps the standard direct release assets as `manifest.json`, `main.js`, and `styles.css`.
-
-### 0.3.36
-
-- Fixes automated community plugin review errors for the manifest description and supported API checks.
-- Replaces direct style assignments flagged by the reviewer with Obsidian-compatible style helpers.
-- Keeps the 0.3.35 bilingual export UI and standard PDF font fallback behavior.
-
-### 0.3.35
-
-- Adds Auto / Chinese / English interface language settings.
-- Localizes the export ribbon tooltip, command name, file/editor menu item, export options panel, settings, busy/completed/error export prompt, and main notices.
-- Auto language follows the browser/system locale and falls back to English outside Chinese locales.
-- Falls back to a standard PDF font when the optional CJK font asset is unavailable, improving direct community-browser install compatibility for English/Latin notes.
-
-### 0.3.34
-
-- Shows the export prompt first after tapping export, then starts the actual PDF work.
-- Simplifies the completed prompt text to a short completed state.
-
-### 0.3.33
-
-- Moves the export busy/completed prompt slightly lower while keeping it as a compact top prompt.
-
-### 0.3.32
-
-- Adds current-screen NoteDraw support by copying the visible live `.notedraw-canvas` overlay into ordinary Markdown PDF exports.
-- Keeps the old Note Doodle current-screen behavior and still ignores hidden drawing canvases.
-- Speeds up direct Excalidraw PDF export by using lower practical raster scales, fewer retry candidates, shorter image-load waits, and duplicate-scale skipping for very large drawings.
-
-### 0.3.31
-
-- Warms up the PDF runtime and font as soon as the export options modal opens, reducing the delay after tapping export.
-- Shortens fixed export prompt waits while still forcing the exporting message to paint before work starts.
-- Uses adaptive preview stabilization and image waits instead of long fixed waits for every note.
-- Reuses embedded image and SVG resources across PDF pages during selectable PDF export.
-
-### 0.3.30
-
-- Moves the output folder field near the top of the export options modal so it stays reachable when the mobile keyboard is open.
-
-### 0.3.29
-
-- Keeps the Obsidian-standard single `main.js` plugin structure while lazy-initializing the PDF runtime only after export starts.
-- Removes the embedded Noto Sans SC base64 fallback from `main.js`; the release package font file is loaded on demand during export.
-- Avoids startup DOM cleanup work and leaves render-root cleanup to the export path.
-
-### 0.3.27
-
-- Expands Note Doodle export detection from reading preview only to any currently visible same-note doodle surface, including editor/source mode.
-- Prefer copying the current live Note Doodle canvas into the exported PDF overlay before falling back to saved stroke data.
-- Keeps hidden doodles hidden: only currently visible doodle canvases are exported.
-
-### 0.3.26
-
-- Adds an editable PDF filename field in the top export toolbar.
-- Uses the edited filename when saving the PDF, while still avoiding overwriting existing files.
-- Sanitizes invalid filename characters and falls back to the note name when the field is empty.
-
-### 0.3.25
-
-- Moves the export status UI to a compact top bar for exporting, completed, and failed states.
-- Removes the center export status panel and extra completion/failure notices.
-- Extends the sticky top action toolbar background to the modal top edge so scrolling options cannot show through a gap.
-
-### 0.3.24
-
-- Forces the exporting prompt to paint before the export job starts, so the user sees feedback first.
-- Replaces the top action row with a sticky toolbar whose full background, divider, and buttons stay fixed together while options scroll.
-- Keeps the bottom duplicate export button removed.
-
-### 0.3.23
-
-- Shows the simple export prompt before work starts and removes the progress-bar UI.
-
-### 0.3.22
-
-- Shows the exporting prompt first, then waits for the interface to paint before starting the export work.
-- Keeps only the top export/cancel actions in the options panel and removes the bottom duplicate action row.
-- Makes the top action row a full sticky background bar so the buttons do not float over scrolling options.
-
-### 0.3.21
-
-- Replaces the export progress bar with a simple waiting prompt.
-- The prompt appears as soon as export starts and closes automatically after the export finishes.
-
-### 0.3.20
-
-- Adds a visible PDF export progress panel with stage text, an animated progress bar, and elapsed-time feedback for long exports.
-- Updates packaged QR-code support text in settings to a bilingual donation prompt.
-
-### 0.3.19
-
-- Uses the current visible Note Doodle screen state as the rule for PDF export.
-- Exports Note Doodle strokes only when the current opened preview for the same note is visibly showing its doodle canvas.
-- Does not read saved doodle JSON in the background, so hidden or currently not displayed doodles stay out of the PDF.
-
-### 0.3.18
-
-- Adds export/cancel buttons above the PDF options so mobile users do not need to scroll to the bottom for the common default export path.
-- Includes Note Doodle Preview saved doodle strokes in ordinary Markdown PDF export by drawing its overlay into the exported preview PDF.
-- Adds canvas capture and page-sliced canvas rendering for selectable-text and image PDF routes.
-
-### 0.3.17
-
-- Opens a common PDF export options panel before exporting from the ribbon, command palette, file menu, or editor menu.
-- The panel supports export mode, page size, orientation, color/grayscale, margin, content scale, image-PDF resolution, title, output folder, open/share after export, and saving choices as defaults.
-- Keeps the 0.3.15 export engine and does not include the 0.3.16 mobile floating button.
-
-### 0.3.15
-
-- Adds ordinary Markdown note PDF options in plugin settings: export mode, page size, orientation, color/grayscale, margin, content scale, title, and image-PDF resolution.
-- Keeps the default one-click behavior compatible with 0.3.14: mobile portrait, color, selectable text PDF.
-- Adds an image-PDF route for ordinary notes while keeping external link annotations clickable.
-
-### 0.3.14
-
-- Adds an optional packaged extras area at the bottom of the plugin settings page.
-- Keeps release extras out of the source repository and README; the standard Obsidian install assets remain `manifest.json`, `main.js`, and `styles.css`.
-
-### 0.3.13
-
-- Embeds the Noto Sans SC fallback font into `main.js` so standard Obsidian community-plugin installs can export Chinese PDFs without extra font files.
-- Publishes standard Obsidian release assets: `manifest.json`, `main.js`, and `styles.css`.
-- Keeps the 0.3.12 Excalidraw large drawing export and PNG-too-large warning avoidance behavior.
-
-### 0.3.12
-
-- Avoids Excalidraw `createPNG` first when SVG export is available, so successful large drawing exports should not show PNG-too-large notices.
-- Rasterizes Excalidraw SVG internally with canvas size limits before building the sliced image PDF.
-- Keeps low-resolution PNG fallback only if the SVG route fails or is unavailable.
-- Keeps the 0.3.11 large drawing slicing behavior.
-
-### 0.3.11
-
-- Makes direct `.excalidraw.md` image PDF export more tolerant of large drawings.
-- Retries Excalidraw PNG export at lower scales when the generated image is too large or PDF embedding fails.
-- Slices tall Excalidraw images into phone-height PDF pages instead of creating one oversized page.
-
-### 0.3.10
-
-- Changes direct `.excalidraw.md` export to a pure image-to-PDF path.
-- Uses Excalidraw's PNG export API first, with SVG rasterization only as a fallback.
-- Keeps ordinary Markdown export on the existing selectable preview-text PDF path.
-
-### 0.3.9
-
-- Detects `.excalidraw.md` files and skips Excalidraw source blocks such as `# Excalidraw Data` and `compressed-json`, so raw drawing data is no longer exported as PDF text.
-- Uses the installed Excalidraw plugin runtime to render a direct SVG preview for Excalidraw files when available.
-- Treats large/Excalidraw SVG previews as media instead of tiny icons, keeping them scaled inside the phone-width PDF page instead of clipping or dropping them.
-
-### 0.3.7
-
-- Waits for embedded previews and dynamic task blocks to settle before measuring the export DOM.
-- Removes unsupported emoji from the hidden export DOM before measurement, so missing emoji glyphs no longer leave oversized gaps around separators.
-- Keeps the 0.3.5 link-annotation and proportional image-scaling fixes.
-
-### 0.3.6
-
-- Tightens separator-heavy preview text before measurement, so `·`, `/`, `|`, punctuation, brackets, and short symbol runs no longer create oversized gaps in the exported PDF.
-- Keeps link annotations based on the final rendered DOM rectangles, so external links remain clickable after spacing cleanup.
-
-### 0.3.5
-
-- Tightens spacing around common separators such as `·`, `|`, `/`, Chinese punctuation, and list-like symbol runs so exported preview text no longer looks over-spaced.
-- Captures link rectangles from the rendered Obsidian preview and writes full PDF link annotations for normal web, mail, tel, and obsidian links.
-- Raises image/figure/page-embed keep priority and draws images with proportional scaling so they are moved or shrunk instead of being cut or flattened.
-
-### 0.3.4
-
-- Tightens phone-preview spacing for titles, headings, paragraphs, lists, quotes, code, embeds, and callouts to reduce the blank, flat feeling.
-- Keeps link underlines close to the actual text width and adds PDF link annotations for normal web/mail/tel/obsidian links.
-- Adds stronger image and figure page-break protection, with image height constrained to fit the phone page when possible.
-- Keeps the 0.3.3 selectable preview-text route and does not switch back to plain text or full-page image PDF.
-
-### 0.3.3
-
-- Builds from the accepted 0.3.2 selectable-text PDF path.
-- Preserves link colors by keeping differently colored preview text as separate PDF text runs.
-- Draws link underlines, task checkboxes, checked states, list bullets, ordered-list markers, and small SVG icons.
-- Keeps pagination improvements for images, list items, paragraphs, tables, code blocks, quotes, embeds, and callouts when they can fit on one page.
-
-### 0.3.2
-
-- Replaced the full-page snapshot background with visible vector PDF text to avoid blurry exports.
-- Fixed page width calculation so wide DOM content is wrapped inside the phone-size PDF instead of being clipped.
-- Tightened export CSS for tables, code blocks, long links, and embeds to prevent side overflow.
-- Uses actual content bottom for pagination to avoid trailing blank pages.
-- Adds image embedding and lightweight block backgrounds without rasterizing the whole page.
-
-### 0.3.1
-
-- Fixed PDF font initialization when the bundled fontkit export shape is `{ default: fontkit }`.
-- Removed Obsidian-specific DOM helper calls from the renderer setup for better mobile compatibility.
-- Kept the Markor-inspired preview-first approach: render preview layout, then write a real selectable PDF text layer.
-
-### 0.3.0
-
-- Removed Text/Snapshot mode selection.
-- Removed the options export command.
-- Added one-click preview PDF export from ribbon, command palette, and note menu.
-- Writes selectable text from the preview DOM, not from a plain Markdown text dump.
-- Uses a preview snapshot only as the visual background; text remains real PDF text.
-- Falls back to visible selectable text if snapshot capture fails, avoiding blank PDFs.
-- Uses an embedded Chinese TrueType font for better PDF reader compatibility.
-
-### 0.2.0
-
-- Added a selectable Text PDF mode and embedded Noto Sans SC fonts.
-
-### 0.1.1
-
-- Fixed blank PDF exports caused by hidden snapshot rendering.
-
-
-## License
-Plugin code and packaged JavaScript are released under the MIT License.
-
-Bundled Noto Sans SC font is licensed under the SIL Open Font License 1.1. See `fonts/LICENSE-OFL.txt`.
+원본 프로젝트의 저작권과 라이선스 고지를 유지합니다. BRAT 설치본에도 같은 고지가 전달되도록 전체 고지문을 빌드된 `main.js` 첫 부분에 평문 주석으로 보존합니다.

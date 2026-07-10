@@ -1,9 +1,9 @@
 {
-  "id": "mobile-pdf-exporter",
-  "name": "Mobile PDF Exporter",
-  "version": "0.3.57",
+  "id": "mobile-pdf-exporter-kr",
+  "name": "Mobile PDF Exporter KR",
+  "version": "0.1.0",
   "minAppVersion": "1.5.0",
-  "description": "One-click selectable preview PDF export for mobile and desktop.",
-  "author": "Murat / Codex",
+  "description": "One-click selectable Korean preview PDF export for mobile and desktop.",
+  "author": "Murat / Korean font fork contributors",
   "isDesktopOnly": false
 }

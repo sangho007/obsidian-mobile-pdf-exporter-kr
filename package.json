@@ -1,11 +1,17 @@
 {
-  "name": "obsidian-mobile-pdf-exporter",
-  "version": "0.3.57",
-  "description": "One-click selectable preview PDF export plugin.",
+  "name": "obsidian-mobile-pdf-exporter-kr",
+  "version": "0.1.0",
+  "description": "One-click selectable Korean preview PDF export plugin.",
   "main": "main.js",
   "scripts": {
+    "build:font": "node scripts/build-korean-font.mjs",
     "build": "node esbuild.config.mjs production",
-    "dev": "node esbuild.config.mjs"
+    "dev": "node esbuild.config.mjs",
+    "release": "npm run build && node scripts/package-release.mjs",
+    "typecheck": "tsc --noEmit",
+    "test:licenses": "node scripts/test-license-notices.mjs",
+    "test:korean-font": "node scripts/test-korean-font.mjs",
+    "test": "npm run typecheck && npm run build && npm run test:licenses && npm run test:korean-font"
   },
   "keywords": [
     "obsidian",
@@ -13,7 +19,7 @@
     "pdf",
     "mobile"
   ],
-  "author": "Murat / Codex",
+  "author": "Murat / Korean font fork contributors",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -23,7 +29,8 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
-    "@pdf-lib/fontkit": "^1.1.1",
-    "pdf-lib": "^1.17.1"
+    "pako": "1.0.11",
+    "pdf-lib": "1.17.1",
+    "pdflib-fontkit": "1.8.11"
   }
 }

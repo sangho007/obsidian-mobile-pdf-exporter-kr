@@ -1,0 +1,43 @@
+Mobile PDF Exporter KR font subset log
+========================================
+
+2026-07-10
+----------
+
+Source font:
+  NotoSansCJKkr-VF.ttf from notofonts/noto-cjk commit
+  523d033d6cb47f4a80c58a35753646f5c3608a78 (Noto Sans CJK 2.004)
+  https://github.com/notofonts/noto-cjk/blob/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/Variable/TTF/NotoSansCJKkr-VF.ttf
+
+Source SHA-256:
+  7715af52f5fe77153ce5678546258993982d2da61abea8d25fb89eb5aaec5ca6
+
+Source copyright (also retained in the font name table):
+  Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
+  Noto is a trademark of Google Inc.
+
+Modification:
+  Instantiated the variable font at wght=400 and subset it with HarfBuzz
+  hb-subset 14.2.1. The subset retains modern Hangul syllables, Hangul jamo
+  and extended jamo, and common Latin/punctuation/symbol ranges. Large CJK
+  ideograph ranges were removed to reduce startup and export memory on iPad.
+  Hinting was removed. The resulting static TrueType font remains licensed
+  under SIL OFL 1.1. The modified font's primary name is
+  "Noto Sans CJK KR"; it does not use the Reserved Font Name "Source".
+
+Metadata note:
+  HarfBuzz instantiates the outlines and OS/2 weight at 400 but preserves the
+  variable source's legacy "Thin" name-table entry. PDF export supplies the
+  explicit BaseFont name NotoSansCJKkr-Regular; glyph shape and text mapping
+  are Regular-weight and are covered by the rendering smoke test.
+
+Generated files:
+  NotoSansCJKkr-Regular.ko-subset.ttf
+  NotoSansCJKkr-Regular.ko-subset.ttf.gz
+
+Subset SHA-256:
+  TTF:  086930ba7df8c78de017cf609e8e23dbf4374074656f559f0cd617c803153ad5
+  Gzip: 84e3f0c5a5a47a6c0ff6fe065c7c4a247522e58d671c1c7a876b92d464359402
+
+Build command:
+  npm run build:font -- /path/to/NotoSansCJKkr-VF.ttf

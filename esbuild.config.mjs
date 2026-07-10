@@ -5,10 +5,33 @@ import esbuild from "esbuild";
 
 const prod = process.argv[2] === "production";
 const builtins = Array.from(new Set([...builtinModules, ...builtinModules.map((name) => `node:${name}`)]));
+const legalNoticeFiles = [
+  "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
+  "THIRD_PARTY_LICENSES.txt",
+  "fonts/LICENSE-OFL.txt",
+  "fonts/FONTLOG.txt"
+];
+const legalNoticeSections = await Promise.all(
+  legalNoticeFiles.map(async (path) => {
+    const content = (await readFile(path, "utf8")).trim();
+    return `===== ${path} =====\n${content}`;
+  })
+);
+const legalNoticeText = legalNoticeSections.join("\n\n");
+if (legalNoticeText.includes("*/")) {
+  throw new Error("A bundled legal notice contains a JavaScript comment terminator.");
+}
+const legalBanner = [
+  "/*!",
+  " * Mobile PDF Exporter KR — bundled legal notices",
+  ...legalNoticeText.split("\n").map((line) => line ? ` * ${line}` : " *"),
+  " */"
+].join("\n");
 
 const context = await esbuild.context({
   banner: {
-    js: "/* Mobile PDF Exporter for Obsidian */"
+    js: legalBanner
   },
   bundle: true,
   entryPoints: ["src/main.ts"],
