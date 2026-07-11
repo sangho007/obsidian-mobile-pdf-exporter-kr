@@ -40,6 +40,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: render-fidelity-${{ github.sha }}
-          path: tmp/pdfs/render-fidelity/
+          path: |
+            tmp/pdfs/render-fidelity/
+            tmp/pdfs/a4-boundary-clipping/
           if-no-files-found: warn
           retention-days: 14

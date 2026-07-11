@@ -154,6 +154,11 @@
     .page-stress-band::after { content: attr(data-band); position: absolute; right: 8px; bottom: -9px; color: rgba(52,58,64,.17); font-size: 42px; font-weight: 900; }
     .slice-sentinel { display: inline-block; padding: 3px 6px; border-radius: 4px; background: #343a40; color: #fff; font: 750 11px/1.3 ui-monospace, monospace; }
     .slice-diagonal { width: 82%; height: 24px; margin: 12px 0 4px 8%; border-radius: 999px; background: linear-gradient(90deg, rgba(240,62,62,.7), rgba(121,80,242,.45), rgba(32,201,151,.7)); transform: rotate(-2deg); }
+    .computed-boundary-source { position: relative; height: 520px; overflow: hidden; background: linear-gradient(180deg, #fff 0 61.5%, #edf2ff 61.5% 100%); }
+    .computed-boundary-source::after { content: "nominal A4 boundary"; position: absolute; z-index: 0; left: 22px; right: 22px; top: 320px; border-top: 1px dashed rgba(224,49,49,.55); color: #c92a2a; font: 700 10px/1.2 ui-monospace, monospace; }
+    .boundary-preface { position: absolute; left: 28px; top: 42px; padding: 10px 14px; border-radius: 8px; background: #e7f5ff; color: #1864ab; }
+    .boundary-crossing-line { position: absolute; z-index: 1; left: 34px; right: 34px; top: 296px; color: #1c1f23; font: 800 22px/26px -apple-system, BlinkMacSystemFont, "Noto Sans KR", sans-serif; letter-spacing: -.01em; }
+    .boundary-following-card { position: absolute; left: 34px; right: 34px; top: 366px; padding: 14px; border: 2px solid #748ffc; border-radius: 12px; background: rgba(219,228,255,.9); box-shadow: 0 5px 14px rgba(54,79,199,.16); }
     .dom-whitespace-regression { position: fixed; left: -10000px; top: 0; width: 500px; font-size: 16px; line-height: 1.5; }
     .dom-whitespace-regression p { margin: 0; }
     .dom-whitespace-regression pre { margin: 0; font: 16px/1.5 ui-monospace, monospace; white-space: pre; }
@@ -328,6 +333,15 @@
       <p>추가 높이 확보용 문장 가나다라마바사아자차카타파하.</p>
     </article></div></div>
     <div class="panel"><div class="panel-label">snapshot · pagination-slice</div><div class="snapshot-output"></div></div>
+  </section>
+
+  <section class="pair computed-boundary-pair" data-case="pagination-text-boundary" data-computed-page-height="320">
+    <div class="panel"><div class="panel-label">reference · computed text boundary</div><div class="snapshot-reference slice-reference"></div><div class="slice-model-host"><article class="fixture snapshot-source computed-boundary-source">
+      <div class="boundary-preface">첫 페이지의 안전한 본문 영역</div>
+      <div class="boundary-crossing-line">한글 경계 gypqj 받침 INLINE · 0.75px 교차</div>
+      <div class="boundary-following-card"><strong>다음 페이지 카드</strong><p>경계 문장 전체와 이 카드가 같은 DOM 스냅샷 슬라이스에 온전히 나타나야 합니다.</p></div>
+    </article></div></div>
+    <div class="panel"><div class="panel-label">snapshot · computed text boundary</div><div class="snapshot-output"></div></div>
   </section>
 
   <div class="dom-whitespace-regression" aria-hidden="true">

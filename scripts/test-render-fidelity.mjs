@@ -143,7 +143,8 @@ function assertAdversarialCoverage(results) {
     "pagination-nonuniform-b",
     "pagination-nonuniform-c",
     "pagination-nonuniform-d",
-    "pagination-slice"
+    "pagination-slice",
+    "pagination-text-boundary"
   ];
   const missing = requiredCaseIds.filter((id) => !caseIds.has(id));
   if (missing.length > 0) throw new Error(`Render fixture coverage is incomplete: ${missing.join(", ")}.`);
@@ -158,6 +159,10 @@ function assertAdversarialCoverage(results) {
       coverage.nonuniformSliceHeights.length < 4 ||
       new Set(coverage.nonuniformSliceHeights).size < 4) {
     throw new Error("At least four distinct nonuniform page slices are required.");
+  }
+  if (!Number.isFinite(coverage.computedBoundaryBreakPx) ||
+      Math.abs(coverage.computedBoundaryOverflowPx - 0.75) > 0.02) {
+    throw new Error("Computed shallow text-boundary coverage was not recorded accurately.");
   }
 }
 

@@ -45,7 +45,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: render-fidelity-${{ github.sha }}
-          path: tmp/pdfs/render-fidelity/
+          path: |
+            tmp/pdfs/render-fidelity/
+            tmp/pdfs/a4-boundary-clipping/
           if-no-files-found: warn
           retention-days: 14
 
@@ -105,4 +107,4 @@ jobs:
             fonts/LICENSE-OFL.txt fonts/FONTLOG.txt \
             fonts/NotoSansCJKkr-Regular.ko-subset.ttf \
             --title "${GITHUB_REF_NAME}" \
-            --notes "Obsidian 계산 스타일 기반 DOM 스냅샷, grapheme·CSS 공백·페이지 경계 정렬, 복합 표·가상 요소·스크롤 상태 보존, 긴 문서 및 대용량 리소스 메모리 상한을 추가한 무료 한글 선택형 PDF 렌더링 개선 릴리스입니다. 자세한 변경점은 CHANGELOG.md를 참조하세요. main.js와 ZIP에는 글꼴 및 모든 제3자 라이선스 고지가 포함되어 있습니다."
+            --notes "A4처럼 소수점 높이를 가진 용지에서 마지막 1px 미만의 내용과 얕은 글리프 교차가 잘리던 문제를 수정했습니다. 페이지 경계를 반복 검증해 문장 전체를 다음 페이지로 옮기며 Chrome·WKWebView·Poppler 악조건 회귀 검증을 추가했습니다. 자세한 변경점은 CHANGELOG.md를 참조하세요. main.js와 ZIP에는 글꼴 및 모든 제3자 라이선스 고지가 포함되어 있습니다."

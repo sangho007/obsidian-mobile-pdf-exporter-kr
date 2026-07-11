@@ -42,6 +42,24 @@ export interface FixedPageSliceLayout {
   blankHeightPx: number;
 }
 
+export interface PageBreakBlock {
+  top: number;
+  bottom: number;
+  priority: number;
+}
+
+export interface PageBreakOptions {
+  paddingPx?: number;
+  minimumAdvancePx?: number;
+  textPriority?: number;
+}
+
+const DEFAULT_PAGE_BREAK_PADDING_PX = 8;
+const DEFAULT_PAGE_BREAK_MINIMUM_ADVANCE_PX = 72;
+const DEFAULT_TEXT_BLOCK_PRIORITY = 1;
+const SNAPSHOT_GEOMETRY_PRECISION = 1_000;
+const MAX_COMPUTED_PAGE_COUNT = 4_096;
+
 export function startsInsidePageBreakInterval(
   fragmentTopPx: number,
   pageTopPx: number,
@@ -92,6 +110,234 @@ export function getFixedPageSliceLayout(
     contentHeightPx,
     blankHeightPx: Math.max(0, physicalPageHeightPx - contentHeightPx)
   };
+}
+
+/**
+ * Computes contiguous document slices which never exceed one physical page.
+ *
+ * Block-level moves preserve media and containers where practical. A final,
+ * text-only pass then moves any ordinary line which geometrically crosses the
+ * proposed boundary to the following page. That last pass deliberately uses
+ * no visual padding: padding can move a boundary into the preceding line when
+ * line rectangles touch.
+ */
+export function computePageBreaks(
+  contentHeightPx: number,
+  pageHeightPx: number,
+  keepBlocks: PageBreakBlock[],
+  options: PageBreakOptions = {}
+): number[] {
+  if (!Number.isFinite(contentHeightPx) || contentHeightPx < 0) {
+    throw new RangeError("Content height must be a finite, non-negative number.");
+  }
+  if (!Number.isFinite(pageHeightPx) || pageHeightPx <= 0) {
+    throw new RangeError("Physical page height must be a finite, positive number.");
+  }
+  if (contentHeightPx === 0) return [0];
+  const minimumPageCount = Math.ceil(contentHeightPx / pageHeightPx);
+  if (!Number.isFinite(minimumPageCount) || minimumPageCount > MAX_COMPUTED_PAGE_COUNT) {
+    throw new RangeError(`Document requires more than ${MAX_COMPUTED_PAGE_COUNT} physical pages.`);
+  }
+
+  const paddingPx = finiteNonNegativeOption(options.paddingPx, DEFAULT_PAGE_BREAK_PADDING_PX);
+  const minimumAdvancePx = finiteNonNegativeOption(
+    options.minimumAdvancePx,
+    DEFAULT_PAGE_BREAK_MINIMUM_ADVANCE_PX
+  );
+  const textPriority = Number.isFinite(options.textPriority)
+    ? Number(options.textPriority)
+    : DEFAULT_TEXT_BLOCK_PRIORITY;
+  const sortedBlocks = keepBlocks
+    .filter(isUsablePageBreakBlock)
+    .sort((left, right) => left.top - right.top || right.priority - left.priority);
+  const breaks = [0];
+  let pageTop = 0;
+
+  while (pageTop < contentHeightPx) {
+    const physicalBreak = Math.min(contentHeightPx, pageTop + pageHeightPx);
+    if (!(physicalBreak > pageTop)) {
+      throw new RangeError("Physical page height is too small to advance at this document coordinate.");
+    }
+    if (physicalBreak >= contentHeightPx) {
+      breaks.push(contentHeightPx);
+      if (breaks.length - 1 > MAX_COMPUTED_PAGE_COUNT) {
+        throw new RangeError(`Pagination produced more than ${MAX_COMPUTED_PAGE_COUNT} pages.`);
+      }
+      break;
+    }
+
+    let nextBreak = physicalBreak;
+    const nearbyGapBreak = findNearbyGapBreak(
+      pageTop,
+      nextBreak,
+      pageHeightPx,
+      sortedBlocks,
+      paddingPx
+    );
+    if (nearbyGapBreak !== null) nextBreak = nearbyGapBreak;
+
+    const mediaBreak = sortedBlocks
+      .filter((fragment) => {
+        if (fragment.priority === textPriority) return false;
+        if (fragment.priority < 6) return false;
+        const height = fragment.bottom - fragment.top;
+        const startsOnThisPage = startsInsidePageBreakInterval(
+          fragment.top,
+          pageTop,
+          nextBreak,
+          minimumAdvancePx,
+          paddingPx
+        );
+        const crossesBreak = fragment.bottom > nextBreak - paddingPx;
+        const remainingHeight = Math.max(0, nextBreak - fragment.top);
+        const preferredHeight = Math.min(height, pageHeightPx * 0.92);
+        const candidate = fragment.top - paddingPx;
+        return startsOnThisPage && crossesBreak &&
+          remainingHeight < preferredHeight * 0.88 &&
+          candidate > pageTop + pageHeightPx * 0.15;
+      })
+      .sort((left, right) => left.top - right.top)[0];
+
+    if (mediaBreak) nextBreak = mediaBreak.top - paddingPx;
+
+    const crossing = sortedBlocks
+      .filter((fragment) => {
+        if (fragment.priority === textPriority) return false;
+        const height = fragment.bottom - fragment.top;
+        const startsOnThisPage = fragment.top > pageTop + minimumAdvancePx;
+        const fitsOnOnePage = height < pageHeightPx * 0.96;
+        const crossesBreak = fragment.top < nextBreak && fragment.bottom > nextBreak;
+        const candidate = fragment.top - paddingPx;
+        return startsOnThisPage && fitsOnOnePage && crossesBreak &&
+          candidate > pageTop + pageHeightPx * 0.22;
+      })
+      .sort((left, right) => right.priority - left.priority || left.top - right.top)[0];
+
+    if (crossing) nextBreak = crossing.top - paddingPx;
+
+    if (nextBreak <= pageTop + minimumAdvancePx) nextBreak = physicalBreak;
+    nextBreak = clampPageBreakToPhysicalPage(pageTop, nextBreak, pageHeightPx);
+
+    const safeBreak = retreatBreakBeforeCrossingText(
+      pageTop,
+      nextBreak,
+      pageHeightPx,
+      sortedBlocks,
+      textPriority,
+      minimumAdvancePx,
+      nextBreak === physicalBreak ? physicalBreak : null
+    );
+    if (safeBreak !== null) {
+      nextBreak = safeBreak;
+    } else if (nextBreak !== physicalBreak) {
+      nextBreak = retreatBreakBeforeCrossingText(
+        pageTop,
+        physicalBreak,
+        pageHeightPx,
+        sortedBlocks,
+        textPriority,
+        minimumAdvancePx,
+        physicalBreak
+      ) ?? physicalBreak;
+    } else {
+      nextBreak = physicalBreak;
+    }
+
+    if (!(nextBreak > pageTop)) nextBreak = physicalBreak;
+    nextBreak = Math.min(contentHeightPx, pageTop + pageHeightPx, nextBreak);
+    breaks.push(nextBreak);
+    if (breaks.length - 1 > MAX_COMPUTED_PAGE_COUNT) {
+      throw new RangeError(`Pagination produced more than ${MAX_COMPUTED_PAGE_COUNT} pages.`);
+    }
+    pageTop = nextBreak;
+  }
+
+  return breaks;
+}
+
+function findNearbyGapBreak(
+  pageTop: number,
+  idealBreak: number,
+  pageHeightPx: number,
+  keepBlocks: PageBreakBlock[],
+  paddingPx: number
+): number | null {
+  const minBreak = pageTop + pageHeightPx * 0.58;
+  const maxBreak = pageTop + pageHeightPx * 0.98;
+  const candidateBlocks = keepBlocks
+    .filter((block) => block.priority >= 2 && block.bottom > pageTop && block.top < idealBreak + pageHeightPx * 0.2)
+    .sort((left, right) => left.top - right.top);
+  let best: { y: number; score: number } | null = null;
+
+  for (let index = 0; index < candidateBlocks.length - 1; index += 1) {
+    const current = candidateBlocks[index];
+    const next = candidateBlocks[index + 1];
+    const gapTop = current.bottom + paddingPx;
+    const gapBottom = next.top - paddingPx;
+    if (gapBottom <= gapTop) continue;
+    if (gapTop < minBreak || gapTop > maxBreak) continue;
+
+    const y = Math.min(Math.max(gapTop, minBreak), maxBreak);
+    const score = Math.abs(idealBreak - y) - Math.min(64, gapBottom - gapTop) * 0.4;
+    if (!best || score < best.score) best = { y, score };
+  }
+
+  return best?.y ?? null;
+}
+
+function retreatBreakBeforeCrossingText(
+  pageTop: number,
+  candidateBreak: number,
+  pageHeightPx: number,
+  keepBlocks: PageBreakBlock[],
+  textPriority: number,
+  minimumAdvancePx: number,
+  unavoidableReferenceBreak: number | null
+): number | null {
+  let safeBreak = candidateBreak;
+  let retreatedForText = false;
+  const minimumProgress = Math.max(
+    1 / SNAPSHOT_GEOMETRY_PRECISION,
+    Math.min(minimumAdvancePx, pageHeightPx * 0.15)
+  );
+
+  // Blocks are sorted by top. Walking backwards lets one pass find the full
+  // overlapping interval chain which contains the candidate boundary.
+  for (let index = keepBlocks.length - 1; index >= 0; index -= 1) {
+    const fragment = keepBlocks[index];
+    if (fragment.priority !== textPriority) continue;
+    const height = fragment.bottom - fragment.top;
+    if (height > pageHeightPx) continue;
+    if (!(fragment.top < safeBreak && fragment.bottom > safeBreak)) continue;
+
+    const retreatedBreak = floorSnapshotCoordinate(fragment.top);
+    if (!(retreatedBreak > pageTop + minimumProgress)) {
+      const wasAlreadyCrossingReference = unavoidableReferenceBreak !== null &&
+        fragment.top < unavoidableReferenceBreak && fragment.bottom > unavoidableReferenceBreak;
+      if (!retreatedForText || !wasAlreadyCrossingReference) return null;
+      continue;
+    }
+    safeBreak = retreatedBreak;
+    retreatedForText = true;
+  }
+
+  return safeBreak;
+}
+
+function floorSnapshotCoordinate(value: number): number {
+  const scaled = value * SNAPSHOT_GEOMETRY_PRECISION;
+  return Number.isFinite(scaled)
+    ? Math.floor(scaled) / SNAPSHOT_GEOMETRY_PRECISION
+    : value;
+}
+
+function isUsablePageBreakBlock(block: PageBreakBlock): boolean {
+  return Number.isFinite(block.top) && Number.isFinite(block.bottom) &&
+    Number.isFinite(block.priority) && block.bottom > block.top;
+}
+
+function finiteNonNegativeOption(value: number | undefined, fallback: number): number {
+  return Number.isFinite(value) ? Math.max(0, Number(value)) : fallback;
 }
 
 export function measureRenderedWhitespaceSeparator(textNode: Text): PositionedText | null {
