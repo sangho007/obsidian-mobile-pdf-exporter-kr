@@ -33,7 +33,7 @@ jobs:
       - name: Install PDF and image verification tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes poppler-utils python3-pil
+          sudo apt-get install --yes fonts-noto-cjk poppler-utils python3-pil
 
       - name: Test selectable Korean PDF and render fidelity
         run: npm run test:ci

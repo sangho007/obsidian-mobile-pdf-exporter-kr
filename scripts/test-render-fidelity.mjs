@@ -48,6 +48,8 @@ async function main() {
     "--disable-background-networking",
     "--disable-default-apps",
     "--disable-extensions",
+    "--disable-font-subpixel-positioning",
+    "--disable-lcd-text",
     "--disable-sync",
     "--hide-scrollbars",
     "--no-first-run",

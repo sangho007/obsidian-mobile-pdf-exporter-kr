@@ -28,7 +28,7 @@ jobs:
       - name: Install PDF and image verification tools
         run: |
           sudo apt-get update
-          sudo apt-get install --yes poppler-utils python3-pil
+          sudo apt-get install --yes fonts-noto-cjk poppler-utils python3-pil
 
       - name: Run unit, PDF, and visual fidelity tests
         run: npm run test:ci
