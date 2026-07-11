@@ -1,6 +1,6 @@
 {
   "name": "obsidian-mobile-pdf-exporter-kr",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "One-click selectable Korean preview PDF export plugin.",
   "main": "main.js",
   "scripts": {
@@ -12,8 +12,10 @@
     "test:licenses": "node scripts/test-license-notices.mjs",
     "test:korean-font": "node scripts/test-korean-font.mjs",
     "test:apple-pdfkit": "swift scripts/test-apple-pdfkit.swift dist/korean-selectable-smoke.pdf",
+    "test:a4-boundary-clipping": "node scripts/test-a4-boundary-clipping.mjs",
     "test:text-layout": "node scripts/test-text-layout.mjs",
     "test:adversarial-text-layout": "node scripts/test-adversarial-text-layout.mjs",
+    "test:boundary-safe-pagination": "node scripts/test-boundary-safe-pagination.mjs",
     "test:media-raster": "node scripts/test-media-raster.mjs",
     "test:dom-snapshot-media": "node scripts/test-dom-snapshot-media.mjs",
     "test:dom-snapshot-memory": "node scripts/test-dom-snapshot-memory.mjs",
@@ -22,7 +24,7 @@
     "test:render-fidelity-webkit": "node scripts/test-render-fidelity-webkit.mjs",
     "prepare:test-vault": "npm run build && node scripts/prepare-test-vault.mjs",
     "verify:test-vault-pdfs": "node scripts/verify-obsidian-fixture-pdfs.mjs",
-    "test": "npm run typecheck && npm run build && npm run test:licenses && npm run test:text-layout && npm run test:adversarial-text-layout && npm run test:media-raster && npm run test:dom-snapshot-media && npm run test:dom-snapshot-memory && npm run test:obsidian-verifier && npm run test:korean-font",
+    "test": "npm run typecheck && npm run build && npm run test:licenses && npm run test:text-layout && npm run test:adversarial-text-layout && npm run test:boundary-safe-pagination && npm run test:media-raster && npm run test:dom-snapshot-media && npm run test:dom-snapshot-memory && npm run test:obsidian-verifier && npm run test:korean-font && npm run test:a4-boundary-clipping",
     "test:ci": "npm test && npm run test:render-fidelity"
   },
   "keywords": [

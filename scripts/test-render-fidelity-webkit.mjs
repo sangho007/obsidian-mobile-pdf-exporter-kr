@@ -70,9 +70,9 @@ try {
 }
 
 function assertWebKitResults(results) {
-  if (results?.ok !== true || !Array.isArray(results.cases) || results.cases.length !== 13) {
+  if (results?.ok !== true || !Array.isArray(results.cases) || results.cases.length !== 14) {
     throw new Error(
-      `WKWebView fixture must produce exactly 13 successful comparable cases: ` +
+      `WKWebView fixture must produce exactly 14 successful comparable cases: ` +
       `${results?.error ?? results?.cases?.length ?? "invalid results"}`
     );
   }
@@ -84,7 +84,7 @@ function assertWebKitResults(results) {
     throw new Error(`WKWebView fixture reported a non-native WebKit user agent: ${userAgent || "missing"}.`);
   }
   const trace = results.webkitHarness?.trace;
-  if (!trace || trace.serialized < 13 || trace.objectUrl <= 0 || trace.canvasBlob <= 0 ||
+  if (!trace || trace.serialized < 14 || trace.objectUrl <= 0 || trace.canvasBlob <= 0 ||
       trace.imageDecode <= 0 || trace.computedStyle <= 0) {
     throw new Error(`WKWebView fixture execution trace is incomplete: ${JSON.stringify(trace ?? null)}.`);
   }

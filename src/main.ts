@@ -25,7 +25,7 @@ import {
 import { canEncodePdfText, getEncodablePdfText } from "./pdf-text";
 import {
   buildEncodablePositionedRuns,
-  clampPageBreakToPhysicalPage,
+  computePageBreaks,
   fitTextSizeToWidth,
   getFixedPageSliceLayout,
   isRenderedLeadingWhitespaceBoundaryCompatible,
@@ -34,7 +34,6 @@ import {
   isRenderedWhitespaceBoundaryCompatible,
   measureRenderedWhitespaceSeparator,
   segmentTextGraphemes,
-  startsInsidePageBreakInterval,
   verticalCenterBelongsToPage as textCenterBelongsToPage
 } from "./text-layout";
 
@@ -1313,7 +1312,10 @@ export default class MobilePdfExporterPlugin extends Plugin {
         decorationFragments,
         keepBlocks
       );
-      const pageBreaks = computePageBreaks(contentHeightPx, pageHeightPx, keepBlocks);
+      const pageBreaks = computePageBreaks(contentHeightPx, pageHeightPx, keepBlocks, {
+        paddingPx: PAGE_BREAK_PADDING_PX,
+        minimumAdvancePx: PAGE_BREAK_MIN_ADVANCE_PX
+      });
       const backgroundCss = getComputedStyle(pageEl).backgroundColor || "rgb(255, 255, 255)";
 
       return {
@@ -3390,97 +3392,6 @@ function measureExportContentHeight(
 
   const rect = pageEl.getBoundingClientRect();
   return Math.ceil(Math.max(rect.height, 1));
-}
-
-function computePageBreaks(
-  contentHeightPx: number,
-  pageHeightPx: number,
-  keepBlocks: KeepBlockFragment[]
-): number[] {
-  const breaks = [0];
-  let pageTop = 0;
-  const sortedBlocks = [...keepBlocks].sort((a, b) => a.top - b.top || b.priority - a.priority);
-
-  while (pageTop + pageHeightPx < contentHeightPx - 1) {
-    let nextBreak = pageTop + pageHeightPx;
-    const nearbyGapBreak = findNearbyGapBreak(pageTop, nextBreak, pageHeightPx, sortedBlocks);
-    if (nearbyGapBreak) nextBreak = nearbyGapBreak;
-
-    const mediaBreak = sortedBlocks
-      .filter((fragment) => {
-        if (fragment.priority < 6) return false;
-        const height = fragment.bottom - fragment.top;
-        const startsOnThisPage = startsInsidePageBreakInterval(
-          fragment.top,
-          pageTop,
-          nextBreak,
-          PAGE_BREAK_MIN_ADVANCE_PX,
-          PAGE_BREAK_PADDING_PX
-        );
-        const crossesBreak = fragment.bottom > nextBreak - PAGE_BREAK_PADDING_PX;
-        const remainingHeight = Math.max(0, nextBreak - fragment.top);
-        const preferredHeight = Math.min(height, pageHeightPx * 0.92);
-        return startsOnThisPage && crossesBreak && remainingHeight < preferredHeight * 0.88;
-      })
-      .sort((a, b) => a.top - b.top)[0];
-
-    if (mediaBreak) {
-      const candidate = mediaBreak.top - PAGE_BREAK_PADDING_PX;
-      if (candidate > pageTop + pageHeightPx * 0.15) nextBreak = candidate;
-    }
-
-    const crossing = sortedBlocks
-      .filter((fragment) => {
-        const height = fragment.bottom - fragment.top;
-        const startsOnThisPage = fragment.top > pageTop + PAGE_BREAK_MIN_ADVANCE_PX;
-        const fitsOnOnePage = height < pageHeightPx * 0.96;
-        const crossesBreak = fragment.top < nextBreak - 2 && fragment.bottom > nextBreak + 2;
-        return startsOnThisPage && fitsOnOnePage && crossesBreak;
-      })
-      .sort((a, b) => b.priority - a.priority || a.top - b.top)[0];
-
-    if (crossing) {
-      const candidate = crossing.top - PAGE_BREAK_PADDING_PX;
-      if (candidate > pageTop + pageHeightPx * 0.22) nextBreak = candidate;
-    }
-
-    if (nextBreak <= pageTop + PAGE_BREAK_MIN_ADVANCE_PX) nextBreak = pageTop + pageHeightPx;
-    nextBreak = clampPageBreakToPhysicalPage(pageTop, nextBreak, pageHeightPx);
-    breaks.push(Math.min(nextBreak, contentHeightPx));
-    pageTop = nextBreak;
-  }
-
-  if (breaks[breaks.length - 1] < contentHeightPx) breaks.push(contentHeightPx);
-  return breaks;
-}
-
-function findNearbyGapBreak(
-  pageTop: number,
-  idealBreak: number,
-  pageHeightPx: number,
-  keepBlocks: KeepBlockFragment[]
-): number | null {
-  const minBreak = pageTop + pageHeightPx * 0.58;
-  const maxBreak = pageTop + pageHeightPx * 0.98;
-  const candidateBlocks = keepBlocks
-    .filter((block) => block.priority >= 2 && block.bottom > pageTop && block.top < idealBreak + pageHeightPx * 0.2)
-    .sort((a, b) => a.top - b.top);
-  let best: { y: number; score: number } | null = null;
-
-  for (let index = 0; index < candidateBlocks.length - 1; index += 1) {
-    const current = candidateBlocks[index];
-    const next = candidateBlocks[index + 1];
-    const gapTop = current.bottom + PAGE_BREAK_PADDING_PX;
-    const gapBottom = next.top - PAGE_BREAK_PADDING_PX;
-    if (gapBottom <= gapTop) continue;
-    if (gapTop < minBreak || gapTop > maxBreak) continue;
-
-    const y = Math.min(Math.max(gapTop, minBreak), maxBreak);
-    const score = Math.abs(idealBreak - y) - Math.min(64, gapBottom - gapTop) * 0.4;
-    if (!best || score < best.score) best = { y, score };
-  }
-
-  return best?.y ?? null;
 }
 
 function drawTextLayer(

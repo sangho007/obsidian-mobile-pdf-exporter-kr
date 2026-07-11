@@ -16,6 +16,10 @@
 
 선택형 PDF는 Obsidian 미리보기를 페이지 이미지로 보존하고, 그 위에 보이지 않는 실제 PDF 텍스트 레이어를 배치합니다. 따라서 테마와 복잡한 렌더링을 유지하면서 한글 검색·선택·복사가 가능합니다.
 
+## 0.1.2 페이지 경계 수정
+
+A4 페이지 끝을 1px 미만으로 넘는 한글 획이나 영문 descender까지 감지해 문장 전체를 다음 페이지로 이동합니다. 마지막 소수점 꼬리도 별도 페이지에 보존하며, 블록 회피로 옮긴 새 경계가 앞줄을 다시 자르지 않는지 반복 확인합니다.
+
 ## 0.1.1 렌더링 개선
 
 - 브라우저가 Obsidian 미리보기 DOM의 계산된 스타일과 가상 요소를 직접 그려 인라인 코드·강조·취소선·표·콜아웃·그림자·그라디언트를 더 가깝게 보존합니다.
@@ -107,13 +111,14 @@ npm run build:font -- /path/to/NotoSansCJKkr-VF.ttf
 npm ci
 npm run build
 npm test
+npm run test:a4-boundary-clipping
 npm run test:render-fidelity
 # macOS에서 실제 WKWebView 경로까지 추가 검증
 npm run test:render-fidelity-webkit
 npm run test:apple-pdfkit
 ```
 
-`test:korean-font`는 한글·영문·옛한글 자모와 미지원 한자·이모지가 섞인 PDF를 생성하고, Poppler의 `pdftotext`, `pdffonts`, `pdftoppm`으로 텍스트 추출·TrueType 임베딩·실제 한글 윤곽 렌더링을 모두 검사합니다. `test:render-fidelity`는 Chrome에서 Obsidian형 fixture와 DOM 스냅샷을 픽셀·기능 영역별로 비교합니다. macOS 전용 `test:render-fidelity-webkit`은 같은 fixture를 실제 `WKWebView`에서 다시 실행하고 전 페이지 픽셀 비교를 수행합니다. `test:apple-pdfkit`은 숨은 한글 텍스트가 macOS PDFKit에서도 검색·선택되며 화면에는 중복 표시되지 않는지 검사합니다. 미지원 문자가 같은 문장에 있어도 한글은 남아야 합니다. Poppler 실행 파일이 PATH에 없다면 다음처럼 위치를 지정합니다.
+`test:korean-font`는 한글·영문·옛한글 자모와 미지원 한자·이모지가 섞인 PDF를 생성하고, Poppler의 `pdftotext`, `pdffonts`, `pdftoppm`으로 텍스트 추출·TrueType 임베딩·실제 한글 윤곽 렌더링을 모두 검사합니다. `test:a4-boundary-clipping`은 A4 경계 악조건을 실제 선택형 PDF로 만들고 글리프 잉크량·높이·중복·텍스트 추출을 검사합니다. `test:render-fidelity`는 Chrome에서 Obsidian형 fixture와 DOM 스냅샷을 픽셀·기능 영역별로 비교합니다. macOS 전용 `test:render-fidelity-webkit`은 같은 fixture를 실제 `WKWebView`에서 다시 실행하고 전 페이지 픽셀 비교를 수행합니다. `test:apple-pdfkit`은 숨은 한글 텍스트가 macOS PDFKit에서도 검색·선택되며 화면에는 중복 표시되지 않는지 검사합니다. 미지원 문자가 같은 문장에 있어도 한글은 남아야 합니다. Poppler 실행 파일이 PATH에 없다면 다음처럼 위치를 지정합니다.
 
 ```bash
 PDFTOTEXT=/path/to/pdftotext npm run test:korean-font

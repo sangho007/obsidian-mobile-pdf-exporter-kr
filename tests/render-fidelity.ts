@@ -1,5 +1,6 @@
 import { prepareDomSnapshot } from "../src/dom-snapshot";
 import {
+  computePageBreaks,
   getFixedPageSliceLayout,
   isRenderedLeadingWhitespaceBoundaryCompatible,
   isRenderedTrailingWhitespaceBoundaryCompatible,
@@ -41,9 +42,10 @@ async function run(): Promise<void> {
   await Promise.all(Array.from(document.images, (image) => image.decode().catch(() => undefined)));
   paintFixtureCanvases();
   await nextFrame();
+  const boundaryCoverage = configureComputedBoundaryFixture();
   assertDomWhitespaceRegression();
   const primaryRasterScale = getPrimaryRasterScale();
-  const coverage = { ...assertAdversarialFixtureCoverage(), primaryRasterScale };
+  const coverage = { ...assertAdversarialFixtureCoverage(), ...boundaryCoverage, primaryRasterScale };
 
   const results: CaseRecord[] = [];
   for (const pair of Array.from(document.querySelectorAll<HTMLElement>(".pair"))) {
@@ -205,7 +207,8 @@ function assertRequiredFeatureRegions(results: CaseRecord[]): void {
     "pagination-nonuniform-b": ["page-stress-band:1", "page-stress-band:2"],
     "pagination-nonuniform-c": ["page-stress-band:3"],
     "pagination-nonuniform-d": ["page-stress-band:4"],
-    "pagination-slice": ["table:0"]
+    "pagination-slice": ["table:0"],
+    "pagination-text-boundary": ["boundary-crossing-line:0"]
   };
   const byCase = new Map(results.map((result) => [result.id, result]));
   for (const [caseId, requiredIds] of Object.entries(requiredByCase)) {
@@ -217,6 +220,73 @@ function assertRequiredFeatureRegions(results: CaseRecord[]): void {
       throw new Error(`${caseId} silently skipped required visual region(s): ${missing.join(", ")}.`);
     }
   }
+}
+
+function configureComputedBoundaryFixture(): {
+  computedBoundaryOverflowPx: number;
+  computedBoundaryBreakPx: number;
+} {
+  const pair = requiredBoundaryElement<HTMLElement>(".computed-boundary-pair");
+  const source = requiredBoundaryElement<HTMLElement>(".computed-boundary-source");
+  const line = requiredBoundaryElement<HTMLElement>(".boundary-crossing-line");
+  const physicalPageHeightPx = Number(pair.dataset.computedPageHeight);
+  if (!Number.isFinite(physicalPageHeightPx) || physicalPageHeightPx <= 0) {
+    throw new Error("Computed boundary fixture has an invalid physical page height.");
+  }
+
+  const textNode = Array.from(line.childNodes).find((node): node is Text => node.nodeType === Node.TEXT_NODE);
+  if (!textNode) throw new Error("Computed boundary fixture lost its text node.");
+  const range = document.createRange();
+  range.selectNodeContents(textNode);
+  let sourceRect = source.getBoundingClientRect();
+  let lineRect = firstRangeRect(range);
+  const targetBottom = physicalPageHeightPx + 0.75;
+  const currentTop = Number.parseFloat(getComputedStyle(line).top) || 0;
+  line.style.top = `${currentTop + targetBottom - (lineRect.bottom - sourceRect.top)}px`;
+  sourceRect = source.getBoundingClientRect();
+  lineRect = firstRangeRect(range);
+  range.detach();
+
+  const fragment = {
+    top: lineRect.top - sourceRect.top,
+    bottom: lineRect.bottom - sourceRect.top,
+    priority: 1
+  };
+  const pageBreaks = computePageBreaks(sourceRect.height, physicalPageHeightPx, [fragment]);
+  if (pageBreaks.length < 3) throw new Error("Computed boundary fixture did not create a following page.");
+  const pageBreakPx = pageBreaks[1];
+  if (fragment.top < pageBreakPx && fragment.bottom > pageBreakPx) {
+    throw new Error("Production pagination left the boundary through the measured text rectangle.");
+  }
+  if (pageBreakPx > fragment.top || fragment.top - pageBreakPx > 0.0011) {
+    throw new Error(
+      `Production pagination did not place the measured line at the following page start ` +
+      `(${pageBreakPx} vs ${fragment.top}).`
+    );
+  }
+  const pageBottomPx = pageBreaks[2];
+  pair.dataset.pageTop = String(pageBreakPx);
+  pair.dataset.pageHeight = String(physicalPageHeightPx);
+  pair.dataset.nonuniformPageBottom = String(pageBottomPx);
+
+  return {
+    computedBoundaryOverflowPx: fragment.bottom - physicalPageHeightPx,
+    computedBoundaryBreakPx: pageBreakPx
+  };
+}
+
+function requiredBoundaryElement<T extends Element>(selector: string): T {
+  const element = document.querySelector<T>(selector);
+  if (!element) throw new Error(`Missing computed boundary fixture element: ${selector}.`);
+  return element;
+}
+
+function firstRangeRect(range: Range): DOMRect {
+  const rect = Array.from(range.getClientRects()).find((candidate) =>
+    candidate.width > 0.1 && candidate.height > 0.1
+  );
+  if (!rect) throw new Error("Computed boundary fixture text has no measurable rectangle.");
+  return rect;
 }
 
 function hydrateAdversarialSliceFixtures(): void {
@@ -765,7 +835,8 @@ function collectFeatureRegions(
     ["textarea", ".live-textarea"],
     ["select", ".live-select"],
     ["display-contents-child", ".contents-wrapper > span"],
-    ["page-stress-band", ".page-stress-band"]
+    ["page-stress-band", ".page-stress-band"],
+    ["boundary-crossing-line", ".boundary-crossing-line"]
   ] as const;
   const regions: RegionRecord[] = [];
   for (const [feature, selector] of selectors) {
