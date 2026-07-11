@@ -72,12 +72,14 @@ async function main() {
     writeFileSync(resultsPath, `${JSON.stringify(results, null, 2)}\n`);
     writeFileSync(screenshotPath, screenshot);
   } finally {
-    rmSync(userDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    removeTemporaryBrowserProfile(userDataDir);
   }
 
+  const comparisonArgs = [resolve("scripts/compare-render-fidelity.py"), screenshotPath, resultsPath, outputDir];
+  if (process.platform === "linux") comparisonArgs.push("linux");
   const comparison = spawnSync(
     python,
-    [resolve("scripts/compare-render-fidelity.py"), screenshotPath, resultsPath, outputDir],
+    comparisonArgs,
     { encoding: "utf8", timeout: 45_000, maxBuffer: 4 * 1024 * 1024 }
   );
   if (comparison.error?.code === "ENOENT") {
@@ -101,6 +103,18 @@ function resolveChromeExecutable() {
   const executable = candidates.find((candidate) => existsSync(candidate));
   if (!executable) throw new Error("Chrome or Chromium is required for render fidelity tests. Set CHROME_BIN.");
   return executable;
+}
+
+function removeTemporaryBrowserProfile(path) {
+  try {
+    rmSync(path, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
+  } catch (error) {
+    // Linux Chrome helpers can briefly recreate cache files after the browser
+    // process exits. The runner OS cleans /tmp; a cleanup race must not hide a
+    // completed fidelity result, while unexpected filesystem errors still fail.
+    if (!["EBUSY", "ENOTEMPTY", "EPERM"].includes(error?.code)) throw error;
+    process.stderr.write(`Render test left a temporary Chrome profile after cleanup retries: ${path}\n`);
+  }
 }
 
 function assertSpawnSucceeded(result, label) {

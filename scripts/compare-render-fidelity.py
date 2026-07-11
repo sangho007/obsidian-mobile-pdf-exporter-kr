@@ -106,6 +106,23 @@ WEBKIT_REGION_THRESHOLDS = {
     "first-letter-glyph": (0.120, 0.040),
 }
 
+# Linux/Skia and macOS/CoreText place hinted vertical and pseudo-element text
+# edges differently even with LCD/subpixel text disabled. Keep every geometry,
+# table, media, transform and pagination threshold identical; only the measured
+# text-heavy layout-exotics regions receive platform-specific raster bounds.
+LINUX_CASE_THRESHOLDS = {
+    "layout-exotics": (0.085, 0.032),
+}
+LINUX_REGION_THRESHOLDS = {
+    "vertical-writing": (0.250, 0.100),
+    "first-letter": (0.160, 0.070),
+    "first-line": (0.240, 0.085),
+    "display-contents-child": (0.200, 0.065),
+    "first-letter-glyph": (0.120, 0.035),
+    "first-letter-probe": (0.120, 0.035),
+    "first-letter-before-glyph": (0.160, 0.050),
+}
+
 
 def crop_rect(image: Image.Image, rect: dict) -> Image.Image:
     left = int(rect["x"])
@@ -137,12 +154,12 @@ def exceeded_metrics(mismatch: float, error: float, mismatch_limit: float, error
 
 def main() -> int:
     if len(sys.argv) not in (4, 5):
-        raise SystemExit("usage: compare-render-fidelity.py SCREENSHOT RESULTS_JSON OUTPUT_DIR [webkit]")
+        raise SystemExit("usage: compare-render-fidelity.py SCREENSHOT RESULTS_JSON OUTPUT_DIR [webkit|linux]")
     screenshot_path = Path(sys.argv[1])
     results_path = Path(sys.argv[2])
     output_dir = Path(sys.argv[3])
     profile = sys.argv[4] if len(sys.argv) == 5 else "default"
-    if profile not in ("default", "webkit"):
+    if profile not in ("default", "webkit", "linux"):
         raise SystemExit(f"unknown visual comparison profile: {profile}")
     screenshot = Image.open(screenshot_path).convert("RGB")
     results = json.loads(results_path.read_text(encoding="utf-8"))
@@ -154,7 +171,11 @@ def main() -> int:
         snapshot = crop_rect(screenshot, case["snapshot"])
         mismatch_ratio, normalized_error, difference = compare_images(reference, snapshot)
         print(f"{case['id']}: mismatched={mismatch_ratio:.3%}, normalized-error={normalized_error:.4%}")
-        case_mismatch_limit, case_error_limit = CASE_THRESHOLDS.get(case["id"], DEFAULT_CASE_THRESHOLD)
+        case_thresholds = LINUX_CASE_THRESHOLDS if profile == "linux" else {}
+        case_mismatch_limit, case_error_limit = case_thresholds.get(
+            case["id"],
+            CASE_THRESHOLDS.get(case["id"], DEFAULT_CASE_THRESHOLD)
+        )
         if mismatch_ratio > case_mismatch_limit or normalized_error > case_error_limit:
             failures.append(
                 f"{case['id']} exceeded visual thresholds "
@@ -166,7 +187,11 @@ def main() -> int:
             region_snapshot = crop_rect(screenshot, region["snapshot"])
             region_mismatch, region_error, _ = compare_images(region_reference, region_snapshot)
             feature = region["id"].split(":", 1)[0]
-            region_thresholds = WEBKIT_REGION_THRESHOLDS if profile == "webkit" else {}
+            region_thresholds = (
+                WEBKIT_REGION_THRESHOLDS if profile == "webkit"
+                else LINUX_REGION_THRESHOLDS if profile == "linux"
+                else {}
+            )
             region_mismatch_limit, region_error_limit = region_thresholds.get(
                 feature,
                 REGION_THRESHOLDS.get(feature, DEFAULT_REGION_THRESHOLD)
