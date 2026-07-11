@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install PDF and image verification tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes poppler-utils python3-pil
+
+      - name: Run unit, PDF, and visual fidelity tests
+        run: npm run test:ci
+        env:
+          PYTHON: /usr/bin/python3
+
+      - name: Upload visual regression artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-fidelity-${{ github.sha }}
+          path: tmp/pdfs/render-fidelity/
+          if-no-files-found: warn
+          retention-days: 14

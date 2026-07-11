@@ -14,7 +14,16 @@
 - iPad의 언어가 한국어이면 플러그인 UI도 자동으로 한국어를 사용합니다.
 - 플러그인 ID를 `mobile-pdf-exporter-kr`로 분리해 원본 업데이트가 이 포크를 덮어쓰지 않습니다.
 
-선택형 PDF는 Obsidian 미리보기를 페이지 이미지로 보존하고, 그 위에 거의 투명한 실제 PDF 텍스트 레이어를 배치합니다. 따라서 테마와 복잡한 렌더링을 유지하면서 한글 검색·선택·복사가 가능합니다.
+선택형 PDF는 Obsidian 미리보기를 페이지 이미지로 보존하고, 그 위에 보이지 않는 실제 PDF 텍스트 레이어를 배치합니다. 따라서 테마와 복잡한 렌더링을 유지하면서 한글 검색·선택·복사가 가능합니다.
+
+## 0.1.1 렌더링 개선
+
+- 브라우저가 Obsidian 미리보기 DOM의 계산된 스타일과 가상 요소를 직접 그려 인라인 코드·강조·취소선·표·콜아웃·그림자·그라디언트를 더 가깝게 보존합니다.
+- 선택 텍스트는 grapheme와 실제 DOM 좌표 단위로 배치하며, 인라인 태그 사이 공백과 CSS 공백 모드의 연속·앞뒤 공백도 유지합니다.
+- 비균일 페이지 구간을 중복 캡처하지 않고, 이미지·Canvas·CSS·글꼴 리소스와 문서 전체 페이지 래스터에는 iPad용 메모리 상한을 적용합니다.
+- DOM 스냅샷을 안전하게 만들 수 없는 노트는 내장 호환 렌더러로 자동 전환합니다.
+
+전체 변경점은 [CHANGELOG.md](CHANGELOG.md)를 참조하세요.
 
 ## 설치
 
@@ -98,9 +107,13 @@ npm run build:font -- /path/to/NotoSansCJKkr-VF.ttf
 npm ci
 npm run build
 npm test
+npm run test:render-fidelity
+# macOS에서 실제 WKWebView 경로까지 추가 검증
+npm run test:render-fidelity-webkit
+npm run test:apple-pdfkit
 ```
 
-`test:korean-font`는 한글·영문·옛한글 자모와 미지원 한자·이모지가 섞인 PDF를 생성하고, Poppler의 `pdftotext`, `pdffonts`, `pdftoppm`으로 텍스트 추출·TrueType 임베딩·실제 한글 윤곽 렌더링을 모두 검사합니다. 미지원 문자가 같은 문장에 있어도 한글은 남아야 합니다. Poppler 실행 파일이 PATH에 없다면 다음처럼 위치를 지정합니다.
+`test:korean-font`는 한글·영문·옛한글 자모와 미지원 한자·이모지가 섞인 PDF를 생성하고, Poppler의 `pdftotext`, `pdffonts`, `pdftoppm`으로 텍스트 추출·TrueType 임베딩·실제 한글 윤곽 렌더링을 모두 검사합니다. `test:render-fidelity`는 Chrome에서 Obsidian형 fixture와 DOM 스냅샷을 픽셀·기능 영역별로 비교합니다. macOS 전용 `test:render-fidelity-webkit`은 같은 fixture를 실제 `WKWebView`에서 다시 실행하고 전 페이지 픽셀 비교를 수행합니다. `test:apple-pdfkit`은 숨은 한글 텍스트가 macOS PDFKit에서도 검색·선택되며 화면에는 중복 표시되지 않는지 검사합니다. 미지원 문자가 같은 문장에 있어도 한글은 남아야 합니다. Poppler 실행 파일이 PATH에 없다면 다음처럼 위치를 지정합니다.
 
 ```bash
 PDFTOTEXT=/path/to/pdftotext npm run test:korean-font
@@ -108,9 +121,16 @@ PDFTOTEXT=/path/to/pdftotext npm run test:korean-font
 
 검증 PDF는 `dist/korean-selectable-smoke.pdf`에 생성됩니다.
 
+실제 Obsidian 통합 검증용 새 볼트도 만들 수 있습니다. 생성된 경로를 Obsidian으로 열어 8개 fixture를 `PDF Exports`에 내보낸 뒤 두 번째 명령으로 텍스트 순서·공백·페이지 경계·A4 크기·Noto 글꼴 임베딩과 모든 페이지 렌더를 검사합니다.
+
+```bash
+npm run prepare:test-vault
+npm run verify:test-vault-pdfs -- /absolute/path/to/generated-vault
+```
+
 ## 개인정보와 네트워크
 
-노트 렌더링, PDF 생성, 글꼴 로딩은 모두 기기 안에서 이루어집니다. 글꼴을 포함한 이 기능은 네트워크 요청을 하지 않으며 노트 내용도 전송하지 않습니다. 최신 WebView에서는 기본 gzip 해제 기능을 쓰고, 이를 지원하지 않는 구형 WebView에서는 번들된 JavaScript 대체 구현을 사용합니다.
+노트 렌더링, PDF 생성과 글꼴 로딩은 모두 기기 안에서 이루어집니다. 이미 Obsidian이 표시 중인 로컬·동일 출처 리소스를 PDF에 포함하기 위해 기기 내부 URL을 읽을 수 있지만, 플러그인이 노트 내용을 외부 서버로 전송하거나 유료 API를 호출하지는 않습니다. 최신 WebView에서는 기본 gzip 해제 기능을 쓰고, 이를 지원하지 않는 구형 WebView에서는 번들된 JavaScript 대체 구현을 사용합니다.
 
 ## 제한 사항
 

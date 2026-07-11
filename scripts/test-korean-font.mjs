@@ -42,7 +42,10 @@ const expectedFilteredLines = [
   "이모지 혼합: 앞뒤 유지",
   "미지원 문자 혼합: A한글B"
 ];
-const expectedLines = [...koreanOnlyLines, ...expectedFilteredLines];
+const splitInlinePrefix = "인라인 공백: 한글";
+const splitInlineSuffix = " 선택";
+const splitInlineExpected = `${splitInlinePrefix}${splitInlineSuffix}`;
+const expectedLines = [...koreanOnlyLines, ...expectedFilteredLines, splitInlineExpected];
 
 const fontBytes = fontPath.endsWith(".gz")
   ? gunzipSync(readFileSync(fontPath))
@@ -111,9 +114,30 @@ for (const [index, line] of lines.entries()) {
     y: 780 - index * 42,
     size: 18,
     font,
-    color: rgb(0.08, 0.08, 0.08)
+    color: rgb(0.08, 0.08, 0.08),
+    opacity: 0
   });
 }
+
+const splitInlineSize = 18;
+const splitInlineX = 48;
+const splitInlineY = 780 - lines.length * 42;
+page.drawText(splitInlinePrefix, {
+  x: splitInlineX,
+  y: splitInlineY,
+  size: splitInlineSize,
+  font,
+  color: rgb(0.08, 0.08, 0.08),
+  opacity: 0
+});
+page.drawText(splitInlineSuffix, {
+  x: splitInlineX + font.widthOfTextAtSize(splitInlinePrefix, splitInlineSize),
+  y: splitInlineY,
+  size: splitInlineSize,
+  font,
+  color: rgb(0.08, 0.08, 0.08),
+  opacity: 0
+});
 
 mkdirSync(dirname(pdfPath), { recursive: true });
 const pdfBytes = await pdf.save({ useObjectStreams: true });

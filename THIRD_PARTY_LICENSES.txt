@@ -6,7 +6,7 @@ It is also inserted as a readable, non-minified comment at the beginning of
 main.js so installations made by BRAT receive the required notices.
 
 The direct dependency versions are those locked for Mobile PDF Exporter KR
-0.1.0. pdflib-fontkit is itself a pre-bundled distribution, so its internal
+0.1.1. pdflib-fontkit is itself a pre-bundled distribution, so its internal
 modules do not all appear in this project's package-lock.json. Internal
 versions were audited against pdflib-fontkit's published ESM bundle and its
 upstream yarn.lock; the upstream package-lock.json is stale and was not used

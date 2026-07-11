@@ -15,7 +15,28 @@ import pako from "pako";
 import embeddedKoreanFontGzipBase64 from "../fonts/NotoSansCJKkr-Regular.ko-subset.ttf.gz";
 import supportCode1Base64 from "./generated/support-code-1.jpg";
 import supportCode2Base64 from "./generated/support-code-2.png";
+import { prepareDomSnapshot } from "./dom-snapshot";
+import type { PreparedDomSnapshot } from "./dom-snapshot";
+import {
+  canvasToPngBytes,
+  getSafeDocumentRasterScale,
+  rasterizeImageToPngBytes
+} from "./media-raster";
 import { canEncodePdfText, getEncodablePdfText } from "./pdf-text";
+import {
+  buildEncodablePositionedRuns,
+  clampPageBreakToPhysicalPage,
+  fitTextSizeToWidth,
+  getFixedPageSliceLayout,
+  isRenderedLeadingWhitespaceBoundaryCompatible,
+  isRenderedTrailingWhitespaceBoundaryCompatible,
+  isTextMergeGeometryCompatible,
+  isRenderedWhitespaceBoundaryCompatible,
+  measureRenderedWhitespaceSeparator,
+  segmentTextGraphemes,
+  startsInsidePageBreakInterval,
+  verticalCenterBelongsToPage as textCenterBelongsToPage
+} from "./text-layout";
 
 const UI_LANGUAGES = ["auto", "ko", "zh", "en"] as const;
 type UiLanguage = typeof UI_LANGUAGES[number];
@@ -61,6 +82,7 @@ interface ExportFileOptions {
 
 interface TextFragment {
   text: string;
+  graphemes: TextGraphemeFragment[];
   left: number;
   top: number;
   right: number;
@@ -72,21 +94,32 @@ interface TextFragment {
   color: Color;
   underline: boolean;
   href: string | null;
+  mergeContainer: Element;
 }
 
 interface TextLineDraft {
+  text: string;
+  graphemes: TextGraphemeFragment[];
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  fontSizePx: number;
+  fontFamily: string;
+  fontWeight: string;
+  fontStyle: string;
+  color: Color;
+  underline: boolean;
+  href: string | null;
+  mergeContainer: Element;
+}
+
+interface TextGraphemeFragment {
   text: string;
   left: number;
   top: number;
   right: number;
   bottom: number;
-  fontSizePx: number;
-  fontFamily: string;
-  fontWeight: string;
-  fontStyle: string;
-  color: Color;
-  underline: boolean;
-  href: string | null;
 }
 
 interface ImageFragment {
@@ -160,12 +193,14 @@ interface PdfPageSizeMm {
 
 interface PreviewPdfModel {
   ownerDocument: Document;
+  pageEl: HTMLElement;
   pageWidthPt: number;
   pageHeightPt: number;
   sourceWidthPx: number;
   pxToPt: number;
   pageHeightPx: number;
   background: Color;
+  backgroundCss: string;
   boxFragments: BoxFragment[];
   textFragments: TextFragment[];
   imageFragments: ImageFragment[];
@@ -310,7 +345,8 @@ const UI_TEXT = {
     excalidrawExportFailedError: "Excalidraw 이미지가 너무 크거나 내보내기에 실패했습니다. 낮은 해상도와 페이지 분할도 이미 시도했습니다.",
     excalidrawPreviewUnavailable: "Excalidraw 미리보기를 사용할 수 없어 원본 데이터를 건너뛰었습니다.",
     previewNoExportSizeError: "미리보기 영역에 내보낼 수 있는 크기가 없습니다.",
-    previewNoContentError: "미리보기에 내보낼 수 있는 내용이 없습니다."
+    previewNoContentError: "미리보기에 내보낼 수 있는 내용이 없습니다.",
+    previewTooLargeError: "노트가 iPad 안전 메모리 한도를 넘습니다. 노트를 나누거나 페이지 수를 줄인 뒤 다시 내보내세요."
   },
   zh: {
     ribbonTitle: "导出预览版 PDF",
@@ -372,7 +408,8 @@ const UI_TEXT = {
     excalidrawExportFailedError: "Excalidraw 图片过大或导出失败，已尝试降低分辨率和分页切片。",
     excalidrawPreviewUnavailable: "Excalidraw 预览暂不可用，已跳过源码数据。",
     previewNoExportSizeError: "预览层没有可导出的尺寸。",
-    previewNoContentError: "预览没有可导出的内容。"
+    previewNoContentError: "预览没有可导出的内容。",
+    previewTooLargeError: "笔记超过了 iPad 的安全内存限制。请拆分笔记或减少页数后再导出。"
   },
   en: {
     ribbonTitle: "Export preview PDF",
@@ -434,7 +471,8 @@ const UI_TEXT = {
     excalidrawExportFailedError: "The Excalidraw image was too large or export failed. Lower resolutions and page slicing were already tried.",
     excalidrawPreviewUnavailable: "Excalidraw preview is unavailable, so source data was skipped.",
     previewNoExportSizeError: "The preview layer has no exportable size.",
-    previewNoContentError: "The preview has no exportable content."
+    previewNoContentError: "The preview has no exportable content.",
+    previewTooLargeError: "The note exceeds the safe iPad memory budget. Split the note or reduce its page count, then export again."
   }
 } as const;
 
@@ -484,12 +522,20 @@ const EXCALIDRAW_MAX_SLICE_WIDTH_PX = 4096;
 const EXCALIDRAW_MAX_SLICE_HEIGHT_PX = 8192;
 const EXCALIDRAW_MAX_SLICE_PIXELS = 16_000_000;
 const PREVIEW_IMAGE_MAX_CANVAS_PIXELS = 12_000_000;
+const PREVIEW_IMAGE_MAX_CANVAS_DIMENSION = 4096;
+const PREVIEW_PAGE_MAX_PNG_BYTES = 32 * 1024 * 1024;
+const PREVIEW_DOCUMENT_MAX_RASTER_PIXELS = 20_000_000;
+const PREVIEW_DOCUMENT_MAX_PNG_BYTES = 64 * 1024 * 1024;
+const PREVIEW_DOCUMENT_MIN_RASTER_SCALE = 0.5;
+const COMPAT_IMAGE_MAX_CANVAS_PIXELS = 4_000_000;
+const COMPAT_IMAGE_MAX_CANVAS_DIMENSION = 3072;
+const COMPAT_IMAGE_MAX_PNG_BYTES = 16 * 1024 * 1024;
 const FRAME_WAIT_TIMEOUT_MS = 120;
 const BUSY_PROMPT_PAINT_WAIT_MS = 80;
 const PAGE_BREAK_PADDING_PX = 8;
 const PAGE_BREAK_MIN_ADVANCE_PX = 72;
 const SELECTABLE_PREVIEW_BACKGROUND_MIN_SCALE = 2;
-const SELECTABLE_TEXT_LAYER_OPACITY = 0.003;
+const SELECTABLE_TEXT_LAYER_OPACITY = 0;
 const TASK_CHECKBOX_VERTICAL_SHIFT_EM = 0.22;
 const NOTE_DOODLE_MAX_PEN_COUNT = 5;
 const NOTE_DOODLE_DEFAULT_OPACITY = 1;
@@ -887,9 +933,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
     }
 
     const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
-    const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
-    new Uint8Array(pdfBuffer).set(pdfBytes);
-    return new Blob([pdfBuffer], { type: "application/pdf" });
+    return new Blob([getExactArrayBuffer(pdfBytes)], { type: "application/pdf" });
   }
 
   private getActiveMarkdownFile(): TFile | null {
@@ -964,6 +1008,8 @@ export default class MobilePdfExporterPlugin extends Plugin {
       await waitForPreviewDomStable(pageEl, previewWaitProfile.initialStableMs);
       await waitForImages(pageEl, IMAGE_WAIT_TIMEOUT_MS);
       await waitForPreviewDomStable(pageEl, previewWaitProfile.finalStableMs);
+      await waitForPreviewFonts(pageEl, 2500);
+      await waitForPreviewDomStable(pageEl, Math.max(420, previewWaitProfile.finalStableMs));
       this.injectNoteDoodleOverlay(file, markdownEl);
       await nextAnimationFrame(FRAME_WAIT_TIMEOUT_MS);
 
@@ -1110,6 +1156,12 @@ export default class MobilePdfExporterPlugin extends Plugin {
     );
     const { font } = exportFont;
     this.assertKoreanTextEncodable(font, model.textFragments);
+    const domSnapshot = await tryPrepareDomSnapshot(model);
+    const rasterScale = this.getPreviewDocumentRasterScale(
+      model,
+      Math.max(this.settings.imageRasterScale, SELECTABLE_PREVIEW_BACKGROUND_MIN_SCALE)
+    );
+    let totalPngBytes = 0;
 
     for (let index = 0; index < model.pageBreaks.length - 1; index += 1) {
       const pageTopPx = model.pageBreaks[index];
@@ -1117,8 +1169,12 @@ export default class MobilePdfExporterPlugin extends Plugin {
       const pdfPage = pdfDoc.addPage([model.pageWidthPt, model.pageHeightPt]);
       const pngBytes = await renderPreviewPageToPngBytes(model, index, {
         colorMode: this.settings.colorMode,
-        rasterScale: Math.max(this.settings.imageRasterScale, SELECTABLE_PREVIEW_BACKGROUND_MIN_SCALE)
-      });
+        rasterScale
+      }, domSnapshot);
+      totalPngBytes += pngBytes.byteLength;
+      if (totalPngBytes > PREVIEW_DOCUMENT_MAX_PNG_BYTES) {
+        throw new Error(this.t("previewTooLargeError"));
+      }
       const pageImage = await pdfDoc.embedPng(pngBytes);
       pdfPage.drawImage(pageImage, {
         x: 0,
@@ -1149,9 +1205,7 @@ export default class MobilePdfExporterPlugin extends Plugin {
     }
 
     const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
-    const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
-    new Uint8Array(pdfBuffer).set(pdfBytes);
-    return new Blob([pdfBuffer], { type: "application/pdf" });
+    return new Blob([getExactArrayBuffer(pdfBytes)], { type: "application/pdf" });
   }
 
   private async renderPreviewToImagePdf(file: TFile, pageEl: HTMLElement): Promise<Blob> {
@@ -1170,12 +1224,19 @@ export default class MobilePdfExporterPlugin extends Plugin {
     const pdfDoc = await PDFDocumentRuntime.create();
     pdfDoc.setTitle(file.basename);
     pdfDoc.setSubject(IMAGE_PDF_SUBJECT);
+    const domSnapshot = await tryPrepareDomSnapshot(model);
+    const rasterScale = this.getPreviewDocumentRasterScale(model, this.settings.imageRasterScale);
+    let totalPngBytes = 0;
 
     for (let index = 0; index < model.pageBreaks.length - 1; index += 1) {
       const pngBytes = await renderPreviewPageToPngBytes(model, index, {
         colorMode: this.settings.colorMode,
-        rasterScale: this.settings.imageRasterScale
-      });
+        rasterScale
+      }, domSnapshot);
+      totalPngBytes += pngBytes.byteLength;
+      if (totalPngBytes > PREVIEW_DOCUMENT_MAX_PNG_BYTES) {
+        throw new Error(this.t("previewTooLargeError"));
+      }
       const pageImage = await pdfDoc.embedPng(pngBytes);
       const pdfPage = pdfDoc.addPage([model.pageWidthPt, model.pageHeightPt]);
       pdfPage.drawImage(pageImage, {
@@ -1195,9 +1256,27 @@ export default class MobilePdfExporterPlugin extends Plugin {
     }
 
     const pdfBytes = await pdfDoc.save({ useObjectStreams: true });
-    const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
-    new Uint8Array(pdfBuffer).set(pdfBytes);
-    return new Blob([pdfBuffer], { type: "application/pdf" });
+    return new Blob([getExactArrayBuffer(pdfBytes)], { type: "application/pdf" });
+  }
+
+  private getPreviewDocumentRasterScale(model: PreviewPdfModel, requestedScale: number): number {
+    try {
+      return getSafeDocumentRasterScale(
+        model.sourceWidthPx,
+        model.pageHeightPx,
+        model.pageBreaks.length - 1,
+        requestedScale,
+        {
+          maxDimension: PREVIEW_IMAGE_MAX_CANVAS_DIMENSION,
+          maxPixelsPerPage: PREVIEW_IMAGE_MAX_CANVAS_PIXELS,
+          maxTotalPixels: PREVIEW_DOCUMENT_MAX_RASTER_PIXELS,
+          minScale: PREVIEW_DOCUMENT_MIN_RASTER_SCALE,
+          maxScale: 3
+        }
+      );
+    } catch {
+      throw new Error(this.t("previewTooLargeError"));
+    }
   }
 
   private capturePreviewPdfModel(pageEl: HTMLElement): PreviewPdfModel {
@@ -1235,15 +1314,18 @@ export default class MobilePdfExporterPlugin extends Plugin {
         keepBlocks
       );
       const pageBreaks = computePageBreaks(contentHeightPx, pageHeightPx, keepBlocks);
+      const backgroundCss = getComputedStyle(pageEl).backgroundColor || "rgb(255, 255, 255)";
 
       return {
         ownerDocument: pageEl.ownerDocument,
+        pageEl,
         pageWidthPt,
         pageHeightPt,
         sourceWidthPx,
         pxToPt,
         pageHeightPx,
-        background: parseCssColor(getComputedStyle(pageEl).backgroundColor) ?? rgb(1, 1, 1),
+        background: parseCssColor(backgroundCss) ?? rgb(1, 1, 1),
+        backgroundCss,
         boxFragments,
         textFragments,
         imageFragments,
@@ -2383,11 +2465,13 @@ function isExcalidrawSourceText(text: string): boolean {
 function captureTextFragments(pageEl: HTMLElement): TextFragment[] {
   const pageRect = pageEl.getBoundingClientRect();
   const fragments: TextFragment[] = [];
+  let previousFragment: TextFragment | null = null;
+  let pendingSeparator: { grapheme: TextGraphemeFragment; mergeContainer: Element } | null = null;
   const walker = pageEl.ownerDocument.createTreeWalker(pageEl, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
       if (!parent) return NodeFilter.FILTER_REJECT;
-      if (!node.nodeValue?.trim()) return NodeFilter.FILTER_REJECT;
+      if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
       if (!isExportableElement(parent)) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     }
@@ -2397,8 +2481,64 @@ function captureTextFragments(pageEl: HTMLElement): TextFragment[] {
   while (node) {
     const textNode = node as Text;
     const parent = textNode.parentElement;
-    if (parent) fragments.push(...measureTextNode(textNode, parent, pageRect));
+    const text = textNode.nodeValue ?? "";
+    if (parent && /^\s+$/u.test(text)) {
+      const separator = measureRenderedWhitespaceSeparator(textNode);
+      pendingSeparator = separator
+        ? {
+            grapheme: {
+              text: separator.text,
+              left: separator.left - pageRect.left,
+              top: separator.top - pageRect.top,
+              right: separator.right - pageRect.left,
+              bottom: separator.bottom - pageRect.top
+            },
+            mergeContainer: getTextMergeContainer(parent)
+          }
+        : null;
+    } else if (parent) {
+      const measuredFragments = measureTextNode(textNode, parent, pageRect);
+      const firstFragment = measuredFragments[0];
+      if (pendingSeparator && firstFragment) {
+        const sameCurrentContainer = pendingSeparator.mergeContainer === firstFragment.mergeContainer;
+        const bridgesFragments = previousFragment && isRenderedWhitespaceBoundaryCompatible({
+          previous: previousFragment,
+          separator: pendingSeparator.grapheme,
+          current: firstFragment,
+          fontSize: firstFragment.fontSizePx,
+          sameContainer: sameCurrentContainer && previousFragment.mergeContainer === firstFragment.mergeContainer
+        });
+        const leadsCurrent = isRenderedLeadingWhitespaceBoundaryCompatible({
+          separator: pendingSeparator.grapheme,
+          adjacent: firstFragment,
+          fontSize: firstFragment.fontSizePx,
+          sameContainer: sameCurrentContainer
+        });
+        if (bridgesFragments || leadsCurrent) {
+          firstFragment.graphemes.unshift(pendingSeparator.grapheme);
+        } else if (previousFragment && isRenderedTrailingWhitespaceBoundaryCompatible({
+          separator: pendingSeparator.grapheme,
+          adjacent: previousFragment,
+          fontSize: previousFragment.fontSizePx,
+          sameContainer: pendingSeparator.mergeContainer === previousFragment.mergeContainer
+        })) {
+          previousFragment.graphemes.push(pendingSeparator.grapheme);
+        }
+      }
+      fragments.push(...measuredFragments);
+      if (measuredFragments.length) previousFragment = measuredFragments[measuredFragments.length - 1];
+      pendingSeparator = null;
+    }
     node = walker.nextNode();
+  }
+
+  if (pendingSeparator && previousFragment && isRenderedTrailingWhitespaceBoundaryCompatible({
+    separator: pendingSeparator.grapheme,
+    adjacent: previousFragment,
+    fontSize: previousFragment.fontSizePx,
+    sameContainer: pendingSeparator.mergeContainer === previousFragment.mergeContainer
+  })) {
+    previousFragment.graphemes.push(pendingSeparator.grapheme);
   }
 
   return mergeAdjacentFragments(fragments);
@@ -3023,7 +3163,7 @@ function measureTextNode(textNode: Text, parent: HTMLElement, pageRect: DOMRect)
   const range = textNode.ownerDocument.createRange();
   const fragments: TextFragment[] = [];
   let current: TextLineDraft | null = null;
-  let offset = 0;
+  const mergeContainer = getTextMergeContainer(parent);
 
   const pushCurrent = (): void => {
     if (!current) return;
@@ -3031,6 +3171,7 @@ function measureTextNode(textNode: Text, parent: HTMLElement, pageRect: DOMRect)
     if (cleanText) {
       fragments.push({
         text: cleanText,
+        graphemes: current.graphemes,
         left: current.left,
         top: current.top,
         right: current.right,
@@ -3041,17 +3182,19 @@ function measureTextNode(textNode: Text, parent: HTMLElement, pageRect: DOMRect)
         fontStyle: current.fontStyle,
         color: current.color,
         underline: current.underline,
-        href: current.href
+        href: current.href,
+        mergeContainer: current.mergeContainer
       });
     }
     current = null;
   };
 
-  for (const char of Array.from(text)) {
-    const start = offset;
-    offset += char.length;
+  for (const segment of segmentTextGraphemes(text)) {
+    const char = segment.text;
+    const start = segment.start;
+    const offset = segment.end;
 
-    if (char === "\n" || char === "\r") {
+    if (/^[\r\n]+$/u.test(char)) {
       pushCurrent();
       continue;
     }
@@ -3060,16 +3203,7 @@ function measureTextNode(textNode: Text, parent: HTMLElement, pageRect: DOMRect)
     range.setEnd(textNode, offset);
     const rect = firstUsefulRect(range);
 
-    if (!rect) {
-      if (/\s/u.test(char) && current) current.text += " ";
-      continue;
-    }
-
-    const isWhitespace = /\s/u.test(char);
-    if (isWhitespace) {
-      if (current) current.text += " ";
-      continue;
-    }
+    if (!rect) continue;
 
     const left = rect.left - pageRect.left;
     const top = rect.top - pageRect.top;
@@ -3085,6 +3219,7 @@ function measureTextNode(textNode: Text, parent: HTMLElement, pageRect: DOMRect)
     if (!current) {
       current = {
         text: "",
+        graphemes: [],
         left,
         top,
         right,
@@ -3095,11 +3230,14 @@ function measureTextNode(textNode: Text, parent: HTMLElement, pageRect: DOMRect)
         fontStyle: style.fontStyle || "normal",
         color,
         underline,
-        href
+        href,
+        mergeContainer
       };
     }
 
-    current.text += char;
+    const normalizedChar = /\s/u.test(char) ? " " : char;
+    current.text += normalizedChar;
+    current.graphemes.push({ text: normalizedChar, left, top, right, bottom });
     current.left = Math.min(current.left, left);
     current.top = Math.min(current.top, top);
     current.right = Math.max(current.right, right);
@@ -3109,6 +3247,12 @@ function measureTextNode(textNode: Text, parent: HTMLElement, pageRect: DOMRect)
   pushCurrent();
   range.detach();
   return fragments;
+}
+
+function getTextMergeContainer(parent: Element): Element {
+  return parent.closest(
+    "td, th, p, li, dt, dd, pre, blockquote, figcaption, h1, h2, h3, h4, h5, h6, .callout-title, .callout-content, .markdown-embed, .internal-embed"
+  ) ?? parent;
 }
 
 function firstUsefulRect(range: Range): DOMRect | null {
@@ -3145,8 +3289,15 @@ function mergeAdjacentFragments(fragments: TextFragment[]): TextFragment[] {
     const previous = merged[merged.length - 1];
     const sameLine =
       previous &&
-      Math.abs(previous.top - fragment.top) <= Math.max(2.5, fragment.fontSizePx * 0.35) &&
-      fragment.left >= previous.right - fragment.fontSizePx * 0.5 &&
+      isTextMergeGeometryCompatible({
+        previousTop: previous.top,
+        previousRight: previous.right,
+        previousFontSize: previous.fontSizePx,
+        currentTop: fragment.top,
+        currentLeft: fragment.left,
+        currentFontSize: fragment.fontSizePx,
+        sameContainer: previous.mergeContainer === fragment.mergeContainer
+      }) &&
       previous.underline === fragment.underline &&
       previous.href === fragment.href &&
       previous.fontFamily === fragment.fontFamily &&
@@ -3159,12 +3310,9 @@ function mergeAdjacentFragments(fragments: TextFragment[]): TextFragment[] {
       continue;
     }
 
-    const gap = fragment.left - previous.right;
-    const separator =
-      gap > fragment.fontSizePx * 0.3 && !previous.text.endsWith(" ") && !fragment.text.startsWith(" ")
-        ? " "
-        : "";
+    const separator = /^\s+$/u.test(fragment.graphemes[0]?.text ?? "") ? " " : "";
     previous.text = normalizeLineText(`${previous.text}${separator}${fragment.text}`);
+    previous.graphemes.push(...fragment.graphemes);
     previous.right = Math.max(previous.right, fragment.right);
     previous.bottom = Math.max(previous.bottom, fragment.bottom);
   }
@@ -3262,7 +3410,13 @@ function computePageBreaks(
       .filter((fragment) => {
         if (fragment.priority < 6) return false;
         const height = fragment.bottom - fragment.top;
-        const startsOnThisPage = fragment.top > pageTop + PAGE_BREAK_MIN_ADVANCE_PX;
+        const startsOnThisPage = startsInsidePageBreakInterval(
+          fragment.top,
+          pageTop,
+          nextBreak,
+          PAGE_BREAK_MIN_ADVANCE_PX,
+          PAGE_BREAK_PADDING_PX
+        );
         const crossesBreak = fragment.bottom > nextBreak - PAGE_BREAK_PADDING_PX;
         const remainingHeight = Math.max(0, nextBreak - fragment.top);
         const preferredHeight = Math.min(height, pageHeightPx * 0.92);
@@ -3291,6 +3445,7 @@ function computePageBreaks(
     }
 
     if (nextBreak <= pageTop + PAGE_BREAK_MIN_ADVANCE_PX) nextBreak = pageTop + pageHeightPx;
+    nextBreak = clampPageBreakToPhysicalPage(pageTop, nextBreak, pageHeightPx);
     breaks.push(Math.min(nextBreak, contentHeightPx));
     pageTop = nextBreak;
   }
@@ -3348,36 +3503,65 @@ function drawTextLayer(
   const drawUnderlines = options.drawUnderlines ?? true;
 
   for (const fragment of fragments) {
-    if (fragment.bottom < pageTopPx || fragment.top > pageBottomPx) continue;
+    if (!verticalCenterBelongsToPage(fragment, pageTopPx, pageBottomPx)) continue;
 
-    const localTop = fragment.top - pageTopPx;
-    const fontSize = Math.max(3.5, fragment.fontSizePx * pxToPt);
-    const x = clampNumber(fragment.left * pxToPt, 0, pageWidthPt - 4, 0);
-    const baselineY = pageHeightPt - (localTop + fragment.fontSizePx * 0.86) * pxToPt;
-    const measuredWidth = Math.max(1, (fragment.right - fragment.left) * pxToPt);
-    const maxWidth = Math.max(8, Math.min(pageWidthPt - x - 2, measuredWidth + 2));
+    for (const run of getEncodableFragmentRuns(font, fragment)) {
+      const localTop = run.top - pageTopPx;
+      const fontSize = Math.max(1, fragment.fontSizePx * pxToPt);
+      const x = clampNumber(run.left * pxToPt, 0, pageWidthPt - 0.5, 0);
+      const baselineY = pageHeightPt - (localTop + fragment.fontSizePx * 0.86) * pxToPt;
+      const measuredWidth = Math.max(0.1, (run.right - run.left) * pxToPt);
+      const maxWidth = Math.max(0.1, Math.min(pageWidthPt - x, measuredWidth));
 
-    const drawn = drawSafeText(page, fragment.text, {
-      x,
-      y: baselineY,
-      size: fontSize,
-      font,
-      color: outputColor(fragment.color, options.colorMode),
-      maxWidth,
-      opacity
-    });
-
-    const inkWidth = Math.min(maxWidth, Math.max(1, drawn.width));
-    if (drawUnderlines && fragment.underline && inkWidth > 1) {
-      const underlineY = baselineY - Math.max(0.55, drawn.size * 0.12);
-      page.drawLine({
-        start: { x, y: underlineY },
-        end: { x: x + inkWidth, y: underlineY },
-        thickness: Math.max(0.35, drawn.size * 0.055),
-        color: outputColor(fragment.color, options.colorMode)
+      const drawn = drawSafeText(page, run.text, {
+        x,
+        y: baselineY,
+        size: fontSize,
+        font,
+        color: outputColor(fragment.color, options.colorMode),
+        maxWidth,
+        opacity,
+        preserveSpacing: true
       });
+
+      const inkWidth = Math.min(maxWidth, Math.max(0.1, drawn.width));
+      if (drawUnderlines && fragment.underline && inkWidth > 0.5) {
+        const underlineY = baselineY - Math.max(0.55, drawn.size * 0.12);
+        page.drawLine({
+          start: { x, y: underlineY },
+          end: { x: x + inkWidth, y: underlineY },
+          thickness: Math.max(0.35, drawn.size * 0.055),
+          color: outputColor(fragment.color, options.colorMode)
+        });
+      }
     }
   }
+}
+
+function verticalCenterBelongsToPage(
+  fragment: Pick<TextFragment, "top" | "bottom">,
+  pageTopPx: number,
+  pageBottomPx: number
+): boolean {
+  return textCenterBelongsToPage(fragment.top, fragment.bottom, pageTopPx, pageBottomPx);
+}
+
+function getEncodableFragmentRuns(font: PDFFont, fragment: TextFragment): TextGraphemeFragment[] {
+  if (!fragment.graphemes.length) {
+    return [{
+      text: getEncodablePdfText(font, fragment.text),
+      left: fragment.left,
+      top: fragment.top,
+      right: fragment.right,
+      bottom: fragment.bottom
+    }].filter((run) => Boolean(run.text));
+  }
+
+  return buildEncodablePositionedRuns(
+    fragment.graphemes,
+    fragment.fontSizePx,
+    (text) => getEncodablePdfText(font, stripProblematicPdfChars(text))
+  );
 }
 
 function drawSafeText(
@@ -3391,14 +3575,16 @@ function drawSafeText(
     color: Color;
     maxWidth: number;
     opacity?: number;
+    preserveSpacing?: boolean;
   }
 ): { text: string; size: number; width: number } {
-  const clean = getEncodablePdfText(options.font, stripProblematicPdfChars(compactSeparatorSpacing(text)));
+  const normalized = options.preserveSpacing
+    ? text.replace(/[\r\n\t\u00A0]+/gu, " ")
+    : compactSeparatorSpacing(text);
+  const clean = getEncodablePdfText(options.font, stripProblematicPdfChars(normalized));
   if (!clean) return { text: "", size: options.size, width: 0 };
   const width = options.font.widthOfTextAtSize(clean, options.size);
-  const fitSize = width > options.maxWidth
-    ? Math.max(3.5, options.size * (options.maxWidth / width))
-    : options.size;
+  const fitSize = fitTextSizeToWidth(options.size, width, options.maxWidth);
   const fitWidth = options.font.widthOfTextAtSize(clean, fitSize);
   const drawOptions = {
     x: options.x,
@@ -3417,9 +3603,7 @@ function drawSafeText(
     if (!fallback) return { text: "", size: fitSize, width: 0 };
     try {
       const fallbackWidth = options.font.widthOfTextAtSize(fallback, options.size);
-      const fallbackSize = fallbackWidth > options.maxWidth
-        ? Math.max(3.5, options.size * (options.maxWidth / fallbackWidth))
-        : options.size;
+      const fallbackSize = fitTextSizeToWidth(options.size, fallbackWidth, options.maxWidth);
       page.drawText(fallback, { ...drawOptions, size: fallbackSize });
       return {
         text: fallback,
@@ -3500,7 +3684,7 @@ function stripProblematicPdfChars(text: string): string {
     if (codePoint >= 0x1F000 && codePoint <= 0x1FAFF) continue;
     stripped += char;
   }
-  return stripped.trim();
+  return stripped;
 }
 
 function shouldDrawMediaOnPage(
@@ -3532,17 +3716,55 @@ function isLargeOrExcalidrawSvg(svg: SVGSVGElement): boolean {
   );
 }
 
+async function tryPrepareDomSnapshot(model: PreviewPdfModel): Promise<PreparedDomSnapshot | null> {
+  try {
+    return await prepareDomSnapshot(model.pageEl, {
+      sourceWidthPx: model.sourceWidthPx,
+      backgroundCss: model.backgroundCss
+    });
+  } catch (error) {
+    console.warn("Mobile PDF Exporter native DOM snapshot preparation failed; using compatibility renderer", error);
+    return null;
+  }
+}
+
 async function renderPreviewPageToPngBytes(
   model: PreviewPdfModel,
   pageIndex: number,
   options: {
     colorMode: PdfColorMode;
     rasterScale: number;
-  }
+  },
+  domSnapshot: PreparedDomSnapshot | null = null
 ): Promise<Uint8Array> {
   const pageTopPx = model.pageBreaks[pageIndex];
   const pageBottomPx = model.pageBreaks[pageIndex + 1];
+  const { contentHeightPx: pageSliceHeightPx } = getFixedPageSliceLayout(
+    pageTopPx,
+    pageBottomPx,
+    model.pageHeightPx
+  );
   const scale = getSafePreviewImageScale(model.sourceWidthPx, model.pageHeightPx, options.rasterScale);
+  if (domSnapshot) {
+    try {
+      const pageSliceBytes = await domSnapshot.renderPage({
+        pageTopPx,
+        pageHeightPx: pageSliceHeightPx,
+        scale,
+        grayscale: options.colorMode === "grayscale"
+      });
+      return await placePageSliceOnFixedCanvas(
+        model,
+        pageSliceBytes,
+        pageSliceHeightPx,
+        scale,
+        options.colorMode
+      );
+    } catch (error) {
+      console.warn(`Mobile PDF Exporter native DOM snapshot page ${pageIndex + 1} failed; using compatibility renderer`, error);
+    }
+  }
+
   const canvas = createCanvas(model.ownerDocument);
   const context = canvas.getContext("2d");
   if (!context) throw new Error("图片版 PDF 渲染失败：canvas 不可用。");
@@ -3553,56 +3775,113 @@ async function renderPreviewPageToPngBytes(
   context.fillStyle = colorToCss(model.background, "color");
   context.fillRect(0, 0, model.sourceWidthPx, model.pageHeightPx);
 
-  drawCanvasBoxLayer(context, model.boxFragments, {
-    pageTopPx,
-    pageBottomPx,
-    colorMode: "color"
-  });
-  await drawCanvasImageLayer(context, model.imageFragments, {
-    pageTopPx,
-    pageBottomPx,
-    sourceWidthPx: model.sourceWidthPx,
-    pageHeightPx: model.pageHeightPx
-  });
-  await drawCanvasSvgLayer(context, model.svgFragments, {
-    pageTopPx,
-    pageBottomPx,
-    sourceWidthPx: model.sourceWidthPx,
-    pageHeightPx: model.pageHeightPx,
-    rasterScale: scale
-  });
-  drawCanvasDecorationLayer(context, model.decorationFragments, {
-    pageTopPx,
-    pageBottomPx,
-    sourceWidthPx: model.sourceWidthPx,
-    pageHeightPx: model.pageHeightPx,
-    colorMode: "color"
-  });
-  drawCanvasTextLayer(context, model.textFragments, {
-    pageTopPx,
-    pageBottomPx,
-    sourceWidthPx: model.sourceWidthPx,
-    colorMode: "color"
-  });
-  drawCanvasBitmapLayer(context, model.canvasFragments, {
-    pageTopPx,
-    pageBottomPx,
-    sourceWidthPx: model.sourceWidthPx,
-    pageHeightPx: model.pageHeightPx
-  });
+  context.save();
+  context.beginPath();
+  context.rect(0, 0, model.sourceWidthPx, pageSliceHeightPx);
+  context.clip();
+  try {
+    drawCanvasBoxLayer(context, model.boxFragments, {
+      pageTopPx,
+      pageBottomPx,
+      colorMode: "color"
+    });
+    await drawCanvasImageLayer(context, model.imageFragments, {
+      pageTopPx,
+      pageBottomPx,
+      sourceWidthPx: model.sourceWidthPx,
+      pageHeightPx: pageSliceHeightPx
+    });
+    await drawCanvasSvgLayer(context, model.svgFragments, {
+      pageTopPx,
+      pageBottomPx,
+      sourceWidthPx: model.sourceWidthPx,
+      pageHeightPx: pageSliceHeightPx,
+      rasterScale: scale
+    });
+    drawCanvasDecorationLayer(context, model.decorationFragments, {
+      pageTopPx,
+      pageBottomPx,
+      sourceWidthPx: model.sourceWidthPx,
+      pageHeightPx: pageSliceHeightPx,
+      colorMode: "color"
+    });
+    drawCanvasTextLayer(context, model.textFragments, {
+      pageTopPx,
+      pageBottomPx,
+      sourceWidthPx: model.sourceWidthPx,
+      colorMode: "color"
+    });
+    drawCanvasBitmapLayer(context, model.canvasFragments, {
+      pageTopPx,
+      pageBottomPx,
+      sourceWidthPx: model.sourceWidthPx,
+      pageHeightPx: pageSliceHeightPx
+    });
+  } finally {
+    context.restore();
+  }
 
   if (options.colorMode === "grayscale") {
     context.setTransform(1, 0, 0, 1, 0, 0);
     applyCanvasGrayscale(context, canvas.width, canvas.height);
   }
 
-  return dataUrlToUint8Array(canvas.toDataURL("image/png"));
+  return canvasToPngBytes(canvas, PREVIEW_PAGE_MAX_PNG_BYTES);
+}
+
+async function placePageSliceOnFixedCanvas(
+  model: PreviewPdfModel,
+  pageSliceBytes: Uint8Array,
+  pageSliceHeightPx: number,
+  scale: number,
+  colorMode: PdfColorMode
+): Promise<Uint8Array> {
+  if (pageSliceHeightPx >= model.pageHeightPx - 0.001) return pageSliceBytes;
+  const canvas = createCanvas(model.ownerDocument);
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("DOM snapshot page padding failed: canvas is unavailable.");
+
+  canvas.width = Math.max(1, Math.ceil(model.sourceWidthPx * scale));
+  canvas.height = Math.max(1, Math.ceil(model.pageHeightPx * scale));
+  context.fillStyle = colorToCss(model.background, colorMode);
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const pageSlice = await imageBytesToHtmlImage(pageSliceBytes);
+  const expectedSliceHeight = Math.max(1, Math.ceil(pageSliceHeightPx * scale));
+  if (pageSlice.naturalWidth !== canvas.width || pageSlice.naturalHeight !== expectedSliceHeight) {
+    throw new Error(
+      `DOM snapshot page slice dimensions are invalid ` +
+      `(${pageSlice.naturalWidth} x ${pageSlice.naturalHeight}; expected ${canvas.width} x ${expectedSliceHeight}).`
+    );
+  }
+  context.drawImage(pageSlice, 0, 0);
+  return canvasToPngBytes(canvas, PREVIEW_PAGE_MAX_PNG_BYTES);
 }
 
 function getSafePreviewImageScale(widthPx: number, heightPx: number, requestedScale: number): number {
-  const safeRequested = clampNumber(requestedScale, 1, 3, DEFAULT_SETTINGS.imageRasterScale);
+  const safeRequested = clampNumber(
+    requestedScale,
+    PREVIEW_DOCUMENT_MIN_RASTER_SCALE,
+    3,
+    DEFAULT_SETTINGS.imageRasterScale
+  );
   const maxPixelScale = Math.sqrt(PREVIEW_IMAGE_MAX_CANVAS_PIXELS / Math.max(1, widthPx * heightPx));
-  return Math.max(0.75, Math.min(safeRequested, maxPixelScale));
+  const maxDimensionScale = Math.min(
+    PREVIEW_IMAGE_MAX_CANVAS_DIMENSION / Math.max(1, widthPx),
+    PREVIEW_IMAGE_MAX_CANVAS_DIMENSION / Math.max(1, heightPx)
+  );
+  return Math.max(0.25, Math.min(safeRequested, maxPixelScale, maxDimensionScale));
+}
+
+function getExactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  if (bytes.buffer instanceof ArrayBuffer &&
+      bytes.byteOffset === 0 &&
+      bytes.byteLength === bytes.buffer.byteLength) {
+    return bytes.buffer;
+  }
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
 }
 
 function drawCanvasBoxLayer(
@@ -3856,13 +4135,22 @@ function drawCanvasTextLayer(
   }
 ): void {
   for (const fragment of fragments) {
-    if (fragment.bottom < options.pageTopPx || fragment.top > options.pageBottomPx) continue;
+    if (!verticalCenterBelongsToPage(fragment, options.pageTopPx, options.pageBottomPx)) continue;
 
     const fontSize = Math.max(5, fragment.fontSizePx);
     const x = clampNumber(fragment.left, 0, options.sourceWidthPx - 4, 0);
     const y = fragment.top - options.pageTopPx + fragment.fontSizePx * 0.86;
-    const measuredWidth = Math.max(1, fragment.right - fragment.left);
-    const maxWidth = Math.max(8, Math.min(options.sourceWidthPx - x - 2, measuredWidth + fragment.fontSizePx * 0.75));
+    const measuredWidth = Math.max(0.5, fragment.right - fragment.left);
+    const maxWidth = Math.max(0.5, Math.min(options.sourceWidthPx - x, measuredWidth));
+    context.save();
+    context.beginPath();
+    context.rect(
+      x,
+      Math.max(0, fragment.top - options.pageTopPx - 1),
+      maxWidth,
+      Math.max(1, fragment.bottom - fragment.top + 2)
+    );
+    context.clip();
     const drawn = drawCanvasText(context, fragment.text, {
       x,
       y,
@@ -3884,6 +4172,7 @@ function drawCanvasTextLayer(
       context.lineTo(x + Math.min(maxWidth, measuredWidth + 2, drawn.width), underlineY);
       context.stroke();
     }
+    context.restore();
   }
 }
 
@@ -3909,7 +4198,7 @@ function drawCanvasText(
   let runs = splitCanvasTextRuns(clean);
   let width = measureCanvasTextRuns(context, runs, size, options);
   if (width > options.maxWidth) {
-    size = Math.max(5, size * (options.maxWidth / width));
+    size = fitTextSizeToWidth(size, width, options.maxWidth);
     runs = splitCanvasTextRuns(clean);
     width = measureCanvasTextRuns(context, runs, size, options);
   }
@@ -4243,15 +4532,15 @@ function getGenericEmojiColor(emoji: string): string {
 
 async function imageElementToPngBytes(image: HTMLImageElement, colorMode: PdfColorMode = "color"): Promise<Uint8Array | null> {
   try {
-    const canvas = createCanvas(image);
-    const context = canvas.getContext("2d");
-    if (!context) return null;
-
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
-    context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    if (colorMode === "grayscale") applyCanvasGrayscale(context, canvas.width, canvas.height);
-    return dataUrlToUint8Array(canvas.toDataURL("image/png"));
+    return await rasterizeImageToPngBytes(
+      image,
+      {
+        maxDimension: COMPAT_IMAGE_MAX_CANVAS_DIMENSION,
+        maxPixels: COMPAT_IMAGE_MAX_CANVAS_PIXELS,
+        maxPngBytes: COMPAT_IMAGE_MAX_PNG_BYTES
+      },
+      colorMode === "grayscale" ? applyCanvasGrayscale : undefined
+    );
   } catch (error) {
     console.warn("Mobile PDF Exporter image embed failed", error);
     return null;
@@ -4290,7 +4579,7 @@ async function svgElementToPngBytes(
       const image = await loadImage(url, timeoutMs);
       context.drawImage(image, 0, 0, width, height);
       if (colorMode === "grayscale") applyCanvasGrayscale(context, canvas.width, canvas.height);
-      return dataUrlToUint8Array(canvas.toDataURL("image/png"));
+      return await canvasToPngBytes(canvas, PREVIEW_PAGE_MAX_PNG_BYTES);
     } finally {
       URL.revokeObjectURL(url);
     }
@@ -4340,7 +4629,7 @@ async function imageSliceToPngBytes(
   context.imageSmoothingQuality = scale < 1 ? "high" : "medium";
   context.drawImage(image, 0, cropY, sourceWidth, cropHeight, 0, 0, targetWidth, targetHeight);
   if (colorMode === "grayscale") applyCanvasGrayscale(context, canvas.width, canvas.height);
-  return dataUrlToUint8Array(canvas.toDataURL("image/png"));
+  return canvasToPngBytes(canvas, PREVIEW_PAGE_MAX_PNG_BYTES);
 }
 
 function drawLiveDrawingCanvas(
@@ -4831,6 +5120,16 @@ function hasExportableContent(container: HTMLElement): boolean {
     Array.from(container.querySelectorAll<HTMLElement | SVGSVGElement>("img, svg, canvas, table, li, blockquote, .callout, .markdown-embed, .internal-embed"))
       .some((element) => isExportableElement(element))
   );
+}
+
+async function waitForPreviewFonts(container: HTMLElement, timeoutMs: number): Promise<void> {
+  const fonts = container.ownerDocument.fonts;
+  if (!fonts?.ready) return;
+  await Promise.race([
+    fonts.ready.then(() => undefined),
+    new Promise<void>((resolve) => window.setTimeout(resolve, timeoutMs))
+  ]);
+  await nextAnimationFrame();
 }
 
 async function waitForImages(container: HTMLElement, timeoutMs: number): Promise<void> {

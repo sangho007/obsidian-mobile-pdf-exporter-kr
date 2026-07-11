@@ -16,6 +16,7 @@ const releaseFiles = [
   ["manifest.json", "manifest.json"],
   ["styles.css", "styles.css"],
   ["README.md", "README.md"],
+  ["CHANGELOG.md", "CHANGELOG.md"],
   ["LICENSE", "LICENSE"],
   ["THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md"],
   ["THIRD_PARTY_LICENSES.txt", "THIRD_PARTY_LICENSES.txt"],

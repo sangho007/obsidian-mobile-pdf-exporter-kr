@@ -2,8 +2,12 @@ node_modules/
 .DS_Store
 *.log
 *.tmp
+*.pyc
+__pycache__/
 *.map
 dist/
+tmp/
+output/
 *.pdf
 *.zip
 fonts/SimHei.ttf

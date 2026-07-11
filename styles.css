@@ -24,11 +24,7 @@
   background: var(--background-primary);
   color: var(--text-normal);
   overflow: hidden;
-  overflow-wrap: break-word;
-  word-break: break-word;
   font-size: calc(var(--font-text-size) * var(--mobile-pdf-exporter-font-scale, 1));
-  line-height: 1.48;
-  text-rendering: optimizeLegibility;
 }
 
 .mobile-pdf-exporter-page .markdown-preview-view {
@@ -57,47 +53,6 @@
   margin: 0 0 0.58em;
   font-size: 1.68em;
   line-height: 1.18;
-  letter-spacing: 0;
-}
-
-.mobile-pdf-exporter-page :where(h1, h2, h3, h4, h5, h6) {
-  letter-spacing: 0;
-}
-
-.mobile-pdf-exporter-page :where(.markdown-preview-view h1) {
-  margin: 0.82em 0 0.34em;
-  line-height: 1.18;
-}
-
-.mobile-pdf-exporter-page :where(.markdown-preview-view h2) {
-  margin: 0.74em 0 0.3em;
-  line-height: 1.2;
-}
-
-.mobile-pdf-exporter-page :where(.markdown-preview-view h3) {
-  margin: 0.66em 0 0.26em;
-  line-height: 1.22;
-}
-
-.mobile-pdf-exporter-page :where(.markdown-preview-view h4, .markdown-preview-view h5, .markdown-preview-view h6) {
-  margin: 0.58em 0 0.22em;
-  line-height: 1.24;
-}
-
-.mobile-pdf-exporter-page :where(p, ul, ol, dl) {
-  margin-block: 0.42em;
-}
-
-.mobile-pdf-exporter-page :where(li) {
-  margin-block: 0.16em;
-}
-
-.mobile-pdf-exporter-page :where(ul, ol) {
-  padding-inline-start: 1.45em;
-}
-
-.mobile-pdf-exporter-page :where(blockquote, pre, table, .callout, .markdown-embed, .internal-embed) {
-  margin-block: 0.62em;
 }
 
 .mobile-pdf-exporter-page img,
@@ -122,33 +77,7 @@
 }
 
 .mobile-pdf-exporter-page table {
-  width: 100%;
   max-width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.mobile-pdf-exporter-page pre {
-  white-space: pre-wrap;
-  overflow-x: hidden;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  line-height: 1.42;
-}
-
-.mobile-pdf-exporter-page code,
-.mobile-pdf-exporter-page a,
-.mobile-pdf-exporter-page td,
-.mobile-pdf-exporter-page th {
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-.mobile-pdf-exporter-page a {
-  display: inline;
-  text-underline-offset: 0.14em;
 }
 
 .mobile-pdf-exporter-page .markdown-embed,
