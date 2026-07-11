@@ -50,6 +50,8 @@ async function main() {
     "--disable-extensions",
     "--disable-font-subpixel-positioning",
     "--disable-lcd-text",
+    "--font-render-hinting=none",
+    "--force-color-profile=srgb",
     "--disable-sync",
     "--hide-scrollbars",
     "--no-first-run",
